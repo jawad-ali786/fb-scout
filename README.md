@@ -26,6 +26,13 @@ for the search itself and [docs/DATASET.md](docs/DATASET.md) for the dataset.
 
 ```
 .claude-plugin/marketplace.json     ← makes this repo installable with /plugin
+AGENTS.md                           ← instructions for Cursor, Codex, GitHub Copilot (setup, rules)
+.agents/skills/                     ← the three skills for Cursor, Codex and Copilot (generated)
+.cursor/mcp.json                    ← starts the MCP server in Cursor
+.codex/config.toml                  ← … in OpenAI Codex
+.vscode/mcp.json                    ← … in GitHub Copilot (VS Code)
+.github/mcp.json                    ← … in GitHub Copilot CLI
+scripts/sync_agent_skills.py        ← writes .agents/skills from the Claude Code skills
 plugins/fb-scout/
   .claude-plugin/plugin.json        ← plugin manifest
   .mcp.json                         ← starts the MCP server with uv
@@ -59,7 +66,8 @@ examples/study.example.json         ← a study file to copy
 
 ## Prerequisites (each machine, one time)
 
-1. **Claude Code**
+1. **Claude Code**, or Cursor, OpenAI Codex or GitHub Copilot (see
+   [Use with Cursor, Codex or GitHub Copilot](#use-with-cursor-codex-or-github-copilot))
 2. **uv**, which installs Python and all dependencies automatically:
    - Windows: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
    - macOS/Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -209,7 +217,37 @@ Set `FBSCOUT_OUTPUT_DIR` for the scheduled task so results land in the same fold
 
 ---
 
-## Use without Claude Code
+## Use with Cursor, Codex or GitHub Copilot
+
+Clone this repository and open its folder in the agent. It finds everything there:
+
+| Agent | MCP server | Skills | Instructions |
+|---|---|---|---|
+| Cursor (editor and CLI) | `.cursor/mcp.json` | `.agents/skills/` | `AGENTS.md` |
+| OpenAI Codex (CLI, IDE extension, app) | `.codex/config.toml` | `.agents/skills/` | `AGENTS.md` |
+| GitHub Copilot in VS Code (Agent mode) | `.vscode/mcp.json` | `.agents/skills/` | `AGENTS.md` |
+| GitHub Copilot CLI | `.github/mcp.json` | `.agents/skills/` | `AGENTS.md` |
+
+There's no automatic background setup like in Claude Code. Once per computer, run in the repository root:
+```
+uv sync --inexact --frozen --no-dev --project plugins/fb-scout/server
+```
+(plus `uv run --project plugins/fb-scout/server playwright install chromium` if neither Chrome nor Edge
+is installed). Then switch on the project's `fb-scout` server: Cursor and VS Code ask for approval. Codex
+and Copilot CLI read the project config only in a **trusted** folder, and must be **started in the
+repository root**, because their configs can't name the folder and use a relative path. Details are in
+[AGENTS.md](AGENTS.md).
+
+The skills are called by name: `/fb-search "solar panel" max=15` in Cursor and Copilot, `$fb-search` in
+Codex, and the same for `fb-batch` and `fb-dataset`. Or just ask, as in Claude Code. Results go to
+`fb-scout-output/` in the repository folder.
+
+The Copilot coding agent (the one that runs on GitHub) can't use FB Scout: it needs the browser login on
+your computer.
+
+---
+
+## CLI and other MCP clients
 
 **CLI** (run inside `plugins/fb-scout/server`):
 ```
@@ -228,7 +266,7 @@ uv run fbscout db export --sentiment negative --keyword "Brand X"    # only the 
 uv run fbscout db import                  # runs made before v0.2, or copied from elsewhere
 ```
 
-**Any other MCP client** (Claude Desktop, Cursor, other vendors' agents): add this server:
+**Any other MCP client** (Claude Desktop, other vendors' agents): add this server:
 ```json
 {
   "mcpServers": {
@@ -292,6 +330,11 @@ cd plugins/fb-scout/server
 uv run pytest            # unit tests + offline browser tests (uses installed Chrome, headless)
 claude plugin validate ../   # check the plugin manifest
 ```
+
+The skills are written for Claude Code in `plugins/fb-scout/skills/`. After changing one, run
+`uv run --no-project python scripts/sync_agent_skills.py` in the repository root to update the copies in
+`.agents/skills/` for Cursor, Codex and Copilot (`--check` only reports; a test fails while they're out of
+date).
 
 ---
 

@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "fb-scout": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "run",
+        "--quiet",
+        "--frozen",
+        "--no-dev",
+        "--project",
+        "${workspaceFolder}/plugins/fb-scout/server",
+        "fbscout-mcp"
+      ],
+      "env": {
+        "FBSCOUT_OUTPUT_DIR": "${workspaceFolder}/fb-scout-output"
+      }
+    }
+  }
+}

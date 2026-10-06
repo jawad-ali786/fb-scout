@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "fb-scout": {
+      "type": "local",
+      "command": "uv",
+      "args": [
+        "run",
+        "--quiet",
+        "--frozen",
+        "--no-dev",
+        "--project",
+        "plugins/fb-scout/server",
+        "fbscout-mcp"
+      ],
+      "tools": ["*"]
+    }
+  }
+}

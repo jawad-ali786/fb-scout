@@ -1,0 +1,10 @@
+# FB Scout's MCP server for OpenAI Codex (CLI, IDE extension and app).
+# Codex reads this file only once you trust this folder. The path is relative to the folder Codex
+# was started in, so start Codex in the repository root. Results go to <repo>/fb-scout-output.
+[mcp_servers.fb-scout]
+command = "uv"
+args = ["run", "--quiet", "--frozen", "--no-dev", "--project", "plugins/fb-scout/server", "fbscout-mcp"]
+# The first start on a new computer installs Python and the packages (1-2 minutes).
+startup_timeout_sec = 180
+# A search takes minutes, a study up to an hour, and the login waits until the window is closed.
+tool_timeout_sec = 3600
