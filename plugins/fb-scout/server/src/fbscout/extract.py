@@ -311,7 +311,7 @@ async def expand_see_more(page: Page, el: ElementHandle) -> int:
     except PlaywrightError:
         return 0
     if n:
-        await page.wait_for_timeout(600)
+        await page.wait_for_timeout(350)
     return n
 
 
@@ -459,17 +459,27 @@ def _time_text(link: dict | None) -> str | None:
     return t if t and len(t) <= 60 else None
 
 
-async def extract_post(page: Page, el: ElementHandle, see_more: bool = True) -> Extracted:
+async def extract_post(page: Page, el: ElementHandle, see_more: bool = True, reveal: bool = True) -> Extracted:
+    """Read a post. reveal=False skips the slow part (hovering links to reveal the permalink and the
+    exact date), so a candidate can be checked for the keyword first; call again with reveal=True
+    (and see_more=False) for the posts that are kept."""
     if see_more:
         await expand_see_more(page, el)
-    ts_index, time_exact = await _reveal_timestamp(page, el)
+    ts_index, time_exact, hidden_links = None, None, False
+    if reveal:
+        ts_index, time_exact = await _reveal_timestamp(page, el)
+    else:
+        try:
+            hidden_links = bool(await el.evaluate(PLACEHOLDER_LINKS_JS))
+        except PlaywrightError:
+            hidden_links = False
     raw = await el.evaluate(EXTRACT_JS, False)
 
     links = raw["links"]
     perma = pick_permalink(links)
     author = first_link(links, "profile")
     group = first_link(links, "group")
-    if ts_index is None and perma:
+    if reveal and ts_index is None and perma:
         ts_index = perma["index"]
         time_exact = await hover_time_exact(page, el, ts_index)
 
@@ -488,7 +498,8 @@ async def extract_post(page: Page, el: ElementHandle, see_more: bool = True) -> 
         post_url=post_url,
         kind=kind,
         # People/page cards in search results have no permalink, no time and no message.
-        is_post=bool(perma or time_text or time_exact or raw["message"]),
+        # (Before revealing, a link whose href Facebook fills in on hover counts as a timestamp.)
+        is_post=bool(perma or time_text or time_exact or raw["message"] or hidden_links),
         author_name=author["name"] if author else None,
         author_url=author["url"] if author else None,
         group_name=group["name"] if group else None,

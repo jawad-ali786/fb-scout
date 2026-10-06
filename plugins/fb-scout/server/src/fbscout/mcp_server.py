@@ -111,7 +111,8 @@ async def fb_search(
     - save_unverified: also save results Facebook returned that do not contain the keyword.
     - blur_names: blur names and profile pictures of people/pages in the screenshots.
     - show_browser: run in a visible window instead of hidden (headless); use for debugging.
-    Requires a prior login (fb_login). Takes roughly 5-15 seconds per saved post.
+    Needs a Facebook login: if it returns not_logged_in, call fb_login and then this again. Takes about
+    5 seconds per saved post (20 posts: 1-2 minutes; comments add about 30 s per scanned post).
     Returns the run folder, run_id, stats, warnings, a compact list of records and the dataset import result."""
     progress = _progress_reporter(ctx)
 

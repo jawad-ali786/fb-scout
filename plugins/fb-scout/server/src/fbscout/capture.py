@@ -70,7 +70,7 @@ CLEAR_HIGHLIGHT_JS = "() => { if (window.CSS && CSS.highlights) CSS.highlights.d
 WAIT_IMAGES_JS = """async (el) => {
   const imgs = Array.from(el.querySelectorAll('img')).filter(i => !i.complete);
   const loads = imgs.map(i => new Promise(r => { i.addEventListener('load', r, {once: true}); i.addEventListener('error', r, {once: true}); }));
-  await Promise.race([Promise.all(loads), new Promise(r => setTimeout(r, 3000))]);
+  await Promise.race([Promise.all(loads), new Promise(r => setTimeout(r, 2000))]);
   return imgs.length;
 }"""
 
@@ -104,7 +104,7 @@ async def capture_element(page: Page, el: ElementHandle, path: Path, terms: list
             await el.evaluate(WAIT_IMAGES_JS)
         except PlaywrightError:
             pass
-        await page.wait_for_timeout(300)
+        await page.wait_for_timeout(150)
         await el.screenshot(path=str(path), style=SCREENSHOT_CSS, animations="disabled", timeout=20000)
     finally:
         try:

@@ -111,6 +111,19 @@ async def pause(lo: float, hi: float) -> None:
         await asyncio.sleep(random.uniform(lo, hi) * f)
 
 
+async def scroll_for_more(page: Page, find_js: str) -> None:
+    """Scroll like a person, wait until results not processed yet are on the page (at most 4 s), then a
+    short pause. (Facebook drops old results while adding new ones, so counting them doesn't work.)"""
+    await page.mouse.move(640, 450)
+    await page.mouse.wheel(0, random.randint(1400, 2200))
+    if pace_factor() > 0:
+        try:
+            await page.wait_for_function(f"() => ({find_js})().length > 0", timeout=4000 * min(1.0, pace_factor()))
+        except PlaywrightError:
+            pass   # nothing new (end of results, or slow): the idle-round logic decides
+    await pause(0.8, 1.6)
+
+
 def _text_key(text: str) -> str:
     return "text:" + hashlib.sha1(" ".join(text.split()).lower().encode("utf-8")).hexdigest()
 
@@ -213,8 +226,8 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
                 break
             if not await mark_seen(el):
                 continue
-            try:
-                data = await extract_post(page, el, see_more=see_more)
+            try:   # quick read first; the slow hovering only for posts that are kept (below)
+                data = await extract_post(page, el, see_more=see_more, reveal=False)
             except PlaywrightError as exc:
                 run.stats["errors"] += 1
                 log.warning("extract failed: %s", exc)
@@ -248,6 +261,15 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
             elif not opts.save_unverified:
                 continue
 
+            if data.kind != "profile":
+                try:   # now reveal the permalink and the exact date by hovering
+                    data = await extract_post(page, el, see_more=False, reveal=True)
+                except PlaywrightError as exc:
+                    run.stats["errors"] += 1
+                    log.warning("reveal failed: %s", exc)
+                if data.post_url:
+                    seen.add(data.post_url)
+                    key = data.post_url
             rid = record_id(key)
             kind = "group_post" if opts.group_url and data.kind in ("post", "unknown") else data.kind
             shot = await _screenshot(page, el, run, rank, kind, rid, terms, opts)
@@ -261,16 +283,14 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
             saved.append(record)
             if progress:
                 await progress(f"saved {len(saved)}/{opts.max_results}", len(saved), opts.max_results)
-            await pause(0.4, 1.1)
+            await pause(0.3, 0.8)
 
         if len(saved) >= opts.max_results:
             break
         idle_rounds = idle_rounds + 1 if new_this_round == 0 else 0
         if idle_rounds >= 4 or (idle_rounds >= 2 and await page.evaluate(END_OF_RESULTS_JS)):
             break
-        await page.mouse.move(640, 450)
-        await page.mouse.wheel(0, random.randint(1400, 2200))
-        await pause(1.8, 3.6)
+        await scroll_for_more(page, FIND_POSTS_JS)
         await check_page(page)
     return saved
 
@@ -408,9 +428,7 @@ async def collect_listings(page: Page, opts: SearchOptions, run: RunWriter, dead
         idle_rounds = idle_rounds + 1 if new_this_round == 0 else 0
         if idle_rounds >= 3:
             break
-        await page.mouse.move(640, 450)
-        await page.mouse.wheel(0, random.randint(1200, 1900))
-        await pause(1.8, 3.4)
+        await scroll_for_more(page, FIND_LISTINGS_JS)
         await check_page(page)
     return saved
 

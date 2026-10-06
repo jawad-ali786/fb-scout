@@ -29,6 +29,8 @@ for the search itself and [docs/DATASET.md](docs/DATASET.md) for the dataset.
 plugins/fb-scout/
   .claude-plugin/plugin.json        ← plugin manifest
   .mcp.json                         ← starts the MCP server with uv
+  hooks/hooks.json                  ← setup check at session start (installs Python + packages once)
+  scripts/session-start.sh          ← the setup check
   skills/fb-search/SKILL.md         ← /fb-scout:fb-search, one keyword
   skills/fb-batch/SKILL.md          ← /fb-scout:fb-batch, a study: keywords × groups
   skills/fb-dataset/SKILL.md        ← /fb-scout:fb-dataset, stats, browsing, exports
@@ -83,9 +85,27 @@ examples/study.example.json         ← a study file to copy
 claude --plugin-dir "./plugins/fb-scout"
 ```
 
-> The **first** start downloads the Python dependencies (about 1 minute). If
-> `/mcp` shows `fb-scout` as failed right after installing, wait a moment and
-> reconnect it from `/mcp`.
+### First time on a new computer
+
+1. **Install `uv` once** (it installs Python and every package for you), and Google Chrome
+   (Microsoft Edge also works):
+   - Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+   - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+2. **Add the plugin** (the two `/plugin` commands above), then **start a new Claude Code session**.
+   The plugin's setup hook installs Python and the packages at session start (about
+   100 MB, 1–2 minutes, only once). If `uv` is missing, Claude tells you the command above.
+3. **Search**: `/fb-scout:fb-search "solar panel" max=20`. The very first time, a Chrome window
+   opens for the one-time Facebook login. Log in, close the window, and the search continues by
+   itself in the same prompt.
+
+If `/mcp` still shows `fb-scout` as failed in that first session (slow connection), reconnect
+it there; no restart is needed. From then on, sessions start without any setup (the check
+takes about 0.1 s).
+
+**How long a search takes:** about 5 seconds per saved post, so 20 posts take 1–2 minutes;
+`comments` adds roughly half a minute per scanned post. About half of that time is deliberate
+human-like pausing while scrolling, which keeps the research account from being flagged. A
+lower `FBSCOUT_PACE` (e.g. `0.5`) is faster but riskier.
 
 ---
 

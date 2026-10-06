@@ -1,6 +1,6 @@
 ---
 name: fb-search
-description: Search Facebook posts, group posts, comments or Marketplace listings for a keyword, brand or product. Keeps only results that really contain it, screenshots each match with the keyword highlighted, and saves results.json with metadata (post URL, kind, author, group, time, text, price for listings, screenshot name). Can return only negative posts/complaints: every result is then read and labeled negative/neutral/positive. Use when the user asks to search, collect, monitor or find Facebook posts, group posts, comments, complaints, negative reviews or Marketplace listings about something.
+description: Search Facebook posts, group posts, comments or Marketplace listings for a keyword, brand or product. Keeps only results that really contain it, screenshots each match with the keyword highlighted, and saves results.json with metadata (post URL, kind, author, group, time, text, price for listings, screenshot name). Can return only negative posts or complaints, after every result is read and labeled negative, neutral or positive. Use when the user asks to search, collect, monitor or find Facebook posts, group posts, comments, complaints, negative reviews or Marketplace listings about something.
 argument-hint: "<keyword> [max=20] [group=<facebook group url> | marketplace [city=karachi] [details]] [match=phrase|all|any] [comments] [negative] [names] [blur]"
 allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_status, mcp__plugin_fb-scout_fb-scout__fb_login, mcp__plugin_fb-scout_fb-scout__fb_search, mcp__plugin_fb-scout_fb-scout__fb_list_runs, mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_label_queue, mcp__plugin_fb-scout_fb-scout__fb_label_items, Read
 ---
@@ -38,24 +38,34 @@ under those ads rarely repeat the brand name. Unless the user gave an exact sear
 - a larger `max_results` (30–50), because only part of the results will be negative.
 Tell the user which search you chose and why.
 
-## 2. Make sure the browser is logged in
+## 2. Run the search right away
 
-1. Call `fb_status`.
-2. If `logged_in` is false, log in once with `fb_login`. Pick the method from what the user said:
-   - **Normal Chrome window** (default, `method: "browser"`). First tell the user: "A normal Chrome window will open. Log in with your research Facebook account (not your personal one), wait until you see your feed, then **close the window**. After that, searches run hidden." The tool waits until they close it.
-   - **Copy from Firefox** (`method: "firefox"`): if the user says they're already logged in to Facebook in Firefox. No window opens. Whatever account is logged in there will be used.
-   - **Cookie file** (`method: "cookie_file"`, `cookie_file: <path>`): if the user exported cookies from any browser with an extension. Remind them to delete that file afterwards, because it works like a password.
-3. If login fails or times out, explain the `message` / `hint` and stop.
-4. If `fb_status` returns `browser_unavailable`, tell the user to install Google Chrome (or Microsoft Edge) and stop.
+Call `fb_search` once with the parameters; don't call `fb_status` first (the search checks the login
+itself, and every extra check opens a browser). It runs in a hidden (headless) browser, so no window
+appears. Tell the user it takes about 5 seconds per saved result (a 20-post search takes 1–2 minutes;
+comments add more). Pass `show_browser: true` only if the user asks to watch the run or you are debugging.
 
-## 3. Run the search
+If the fb-scout tools aren't available at all, the plugin is still installing on this computer (the first
+start downloads Python and packages, 1–2 minutes) or `uv` is missing (a session note says so, with the
+install command). Tell the user exactly that, and that afterwards `/mcp` → reconnect fb-scout makes the
+tools available without restarting.
 
-Call `fb_search` once with the parameters. It runs in a hidden (headless) browser, so no window appears. Tell the user it takes about 5–15 seconds per saved result. Pass `show_browser: true` only if the user asks to watch the run or you are debugging.
+## 3. Log in only when the search says so
+
+If `fb_search` returns `error` = `not_logged_in`, log in once with `fb_login`, then run the same
+`fb_search` again in this same turn, so the user doesn't need another prompt. Pick the login method
+from what the user said:
+- **Normal Chrome window** (default, `method: "browser"`). First tell the user: "A normal Chrome window will open. Log in with your research Facebook account (not your personal one), wait until you see your feed, then **close the window**. After that, searches run hidden." The tool waits until they close it.
+- **Copy from Firefox** (`method: "firefox"`): if the user says they're already logged in to Facebook in Firefox. No window opens. Whatever account is logged in there will be used.
+- **Cookie file** (`method: "cookie_file"`, `cookie_file: <path>`): if the user exported cookies from any browser with an extension. Remind them to delete that file afterwards, because it works like a password.
+
+If login fails or times out, explain the `message` / `hint` and stop. If a tool returns
+`browser_unavailable`, tell the user to install Google Chrome (or Microsoft Edge) and stop.
 
 Rules:
 - Run only **one** search at a time. Never call `fb_search` in parallel.
 - If the result has `error` = `checkpoint` or `blocked`, **stop**. Tell the user to resolve it in the browser and wait (hours for `blocked`). Do not retry.
-- If `error` = `not_logged_in`, go back to step 2 once.
+- If `error` = `not_logged_in` again after a successful login, stop and show the `message`.
 - If `error` = `busy` or `profile_in_use`, another run or window is open. Ask the user to close it.
 - If a hidden run finds 0 candidates but the login is fine, try once more with `show_browser: true`. Facebook sometimes treats hidden browsers differently.
 
