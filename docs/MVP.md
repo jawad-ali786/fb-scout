@@ -50,6 +50,17 @@ Sentiment and analysis come later (see [PLAN.md](PLAN.md), Phase 3).
 - `only_negative` returns a `next_step` for labeling the run; see [SENTIMENT.md](SENTIMENT.md).
 - Records have `price`, `location` and `condition` (listings only; empty for posts).
 
+### Changes in v0.3.2
+- Promotions, job posts, giveaways and spam are left out (the content filter, see
+  [DATASET.md](DATASET.md#content-filter)). The check runs right after the keyword check, so
+  nothing is screenshotted for them. They are counted in `stats.skipped_<type>` and in the
+  summary's `filtered_out`, and the first 50 are listed in `run.filtered_examples` (type,
+  reason, kind, author, URL, first 200 characters). `include_types` keeps any of them; kept
+  ones have `content_type` and `content_reason` in their record. Marketplace listings are
+  never filtered.
+- Because left-out posts don't count towards `max_results`, a search for a brand name (mostly
+  ads) scrolls further and may save fewer posts than asked for within its time budget.
+
 ---
 
 ## 2. User flow

@@ -1,7 +1,7 @@
 ---
 name: fb-dataset
 description: Look at, filter and export everything FB Scout has collected. All runs are merged into one dataset with duplicates removed. Gives counts by keyword, kind, language, month posted and group, lists posts and comments with their text, dates and screenshots, exports CSV (Excel), JSONL or Parquet, optionally anonymized, and leaves out items the user marks as false positives or off-topic. Use when the user asks what has been collected, wants numbers or trends, wants to see or read collected posts, or wants an export, CSV or Excel file, or wants posts removed from the dataset.
-argument-hint: "[stats | list | label | export] [keyword=...] [kind=...] [language=en,ur,ur-Latn] [sentiment=negative] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [format=csv|jsonl|parquet] [anonymize]"
+argument-hint: "[stats | list | label | export] [keyword=...] [kind=...] [language=en,ur,ur-Latn] [sentiment=negative] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [include=promotion,job|all] [format=csv|jsonl|parquet] [anonymize]"
 allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_export, mcp__plugin_fb-scout_fb-scout__fb_label_queue, mcp__plugin_fb-scout_fb-scout__fb_label_items, mcp__plugin_fb-scout_fb-scout__fb_exclude_items, mcp__plugin_fb-scout_fb-scout__fb_import_runs, Read
 ---
 
@@ -40,6 +40,13 @@ runs that found it. No browser is needed, so these tools are fast and safe to ca
   and keyword (a post can be negative about one brand and positive about another).
 - **Marketplace listings**: `kind: "marketplace"`; they have `price`, `location` and, when details were
   opened, `condition` and the seller as author.
+- **Ads, job posts, giveaways, spam**: every tool here leaves them out unless `include_types` names them
+  (`promotion`, `job`, `giveaway`, `spam`, or `["all"]`). `fb_dataset_stats` and `fb_dataset_items` report
+  how many are hidden (`hidden_by_content_type`); mention it in one line ("114 ads and 1 job post hidden").
+  Pass `include_types` only when the user asks for those ("show the ads too", "export everything",
+  "how many job posts"); then each item has `content_type` and `content_reason`. If the user says a post
+  was hidden wrongly or an ad got through, show the `content_reason`. The rules are in
+  `content_filter.py`; nothing is deleted.
 - **Remove items** ("this one is not about the brand", "drop the false positives"): show the user the
   items first (`fb_dataset_items`) and remove only the ones they confirm, with `fb_exclude_items`
   (`item_ids`, a short `reason`). They stay out of later imports; the run folders are not changed.

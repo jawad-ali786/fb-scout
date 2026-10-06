@@ -118,8 +118,10 @@ class RunWriter:
         compact_keys = (
             "kind", "keyword_verified", "matched_in", "match_snippet", "post_url", "comment_url",
             "author_name", "group_name", "time_text", "time_exact", "posted_date", "language", "price", "location",
-            "screenshot_name",
+            "content_type", "screenshot_name",
         )
+        left_out = {k[len("skipped_"):]: v for k, v in self.stats.items()
+                    if k.startswith("skipped_") and k != "skipped_not_posts" and v}
         return {
             "ok": self.meta["status"] == "completed",
             "run_id": self.meta["run_id"],
@@ -129,6 +131,7 @@ class RunWriter:
             "results_json": str(self.dir / RESULTS_FILE),
             "stats": self.stats,
             "warnings": self.meta["warnings"],
+            "filtered_out": left_out,   # promotions, job posts... left out by the content filter (include_types)
             "records": [{k: r.get(k) for k in compact_keys} for r in self.results[:max_records]],
             "records_truncated": max(0, len(self.results) - max_records),
         }

@@ -3,7 +3,8 @@
     fbscout status
     fbscout login [--from-firefox | --cookies FILE] [--force] [--timeout 600]
     fbscout search "keyword" [--max 20] [--group URL | --marketplace [--location CITY] [--listing-details]]
-                   [--match phrase|all|any] [--comments] [--name-matches] [--blur-names] ...
+                   [--match phrase|all|any] [--comments] [--name-matches] [--include promotion,job|all]
+                   [--blur-names] ...
     fbscout batch study.json [--dry-run]
     fbscout runs [--keyword K]
     fbscout db import | stats [--keyword K] | export [--format csv|jsonl|parquet] [--anonymize] [filters]
@@ -24,6 +25,9 @@ from .batch import Study
 from .scraper import SearchOptions
 
 
+INCLUDE_HELP = ("also keep content left out by default: comma-separated promotion,job,giveaway,spam, or all")
+
+
 def _add_filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--keyword", help="only items found for this keyword")
     p.add_argument("--kind", help="comma-separated kinds, e.g. post,group_post,comment")
@@ -35,6 +39,7 @@ def _add_filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--sentiment", help="comma-separated labels: negative,neutral,positive")
     p.add_argument("--run", dest="run_id", help="only items found by this run (run_id)")
     p.add_argument("--batch", dest="batch_id", help="only items found by this study (batch_id)")
+    p.add_argument("--include", dest="include_types", metavar="TYPES", help=INCLUDE_HELP)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -60,6 +65,7 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--listing-details", action="store_true", help="open each kept listing for description, seller, date")
     s.add_argument("--name-matches", dest="include_name_matches", action="store_true",
                    help="also keep posts whose keyword is only in a person's/page's/group's name, and profile cards")
+    s.add_argument("--include", dest="include_types", metavar="TYPES", help=INCLUDE_HELP)
     s.add_argument("--match", dest="match_mode", choices=["phrase", "all", "any"], default="phrase")
     s.add_argument("--comments", dest="include_comments", action="store_true", help="also capture matching comments (experimental)")
     s.add_argument("--comment-posts", dest="max_comment_posts", type=int, default=5, help="posts to scan for comments (default 5)")
@@ -86,6 +92,7 @@ def _parser() -> argparse.ArgumentParser:
     st = dbsub.add_parser("stats", help="counts by keyword, kind, language, month and group")
     st.add_argument("--out", dest="output_dir")
     st.add_argument("--keyword")
+    st.add_argument("--include", dest="include_types", metavar="TYPES", help=INCLUDE_HELP)
     exc = dbsub.add_parser("exclude", help="leave items out of the dataset (kept in exclusions.json; run folders unchanged)")
     exc.add_argument("item_ids", nargs="+", metavar="ITEM_ID", help="item ids (i_...) from stats/export")
     exc.add_argument("--reason", required=True, help="why, e.g. 'not about the brand'")
@@ -111,7 +118,7 @@ async def _cli_progress(message: str, done: int, total: int) -> None:
 
 def _filters(args: argparse.Namespace) -> dict:
     return {k: getattr(args, k) for k in ("keyword", "kind", "language", "group", "since", "until", "contains",
-                                          "sentiment", "run_id", "batch_id")}
+                                          "sentiment", "run_id", "batch_id", "include_types")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
             marketplace_location=args.marketplace_location,
             listing_details=args.listing_details,
             include_name_matches=args.include_name_matches,
+            include_types=args.include_types or (),
         )
         result = asyncio.run(api.search(opts, _cli_progress))
     elif args.cmd == "batch":
@@ -168,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.db_cmd == "import":
             result = api.dataset_import(args.output_dir)
         elif args.db_cmd == "stats":
-            result = api.dataset_stats(args.output_dir, args.keyword)
+            result = api.dataset_stats(args.output_dir, args.keyword, args.include_types)
         elif args.db_cmd == "exclude":
             result = api.dataset_exclude(args.item_ids, args.reason, args.output_dir)
         elif args.db_cmd == "label":

@@ -24,8 +24,8 @@ FORMATS = ("csv", "jsonl", "parquet")
 COLUMNS = [
     "item_id", "kind", "keywords", "sentiment", "sentiment_reason", "language", "posted_at", "posted_date",
     "posted_at_precision", "author_name", "author_url", "group_name", "group_url", "post_url", "comment_url",
-    "parent_post_url", "text", "image_text", "price", "location", "condition", "time_text", "time_exact",
-    "first_seen", "last_seen", "times_seen", "screenshot_path", "first_run_id",
+    "parent_post_url", "text", "image_text", "price", "location", "condition", "content_type", "content_reason",
+    "time_text", "time_exact", "first_seen", "last_seen", "times_seen", "screenshot_path", "first_run_id",
 ]
 URL_COLUMNS = ("author_url", "post_url", "comment_url", "parent_post_url")
 ANON_COLUMNS = [c for c in COLUMNS if c not in ("author_name", *URL_COLUMNS)]

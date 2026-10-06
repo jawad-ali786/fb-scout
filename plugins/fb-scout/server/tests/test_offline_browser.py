@@ -48,7 +48,7 @@ def run_on_page(fixture: str, body):
 
 
 def test_collect_posts(tmp_path):
-    opts = SearchOptions(keyword="solar panel", max_results=10).normalized()
+    opts = SearchOptions(keyword="solar panel", max_results=10, include_types="all").normalized()
 
     async def body(page):
         run = RunWriter(tmp_path, opts.keyword, {"scope": "search:posts"})
@@ -117,6 +117,10 @@ def test_collect_posts(tmp_path):
     assert "24v solar panel kit" in sale_post["match_snippet"]
     assert sale_post["post_url"] == "https://www.facebook.com/groups/999/posts/1234/"
 
+    assert group_post["content_type"] is None                       # someone asking: an ordinary post
+    assert group_photo_post["content_type"] == "promotion" and "selling" in group_photo_post["content_reason"]
+    assert sale_post["content_type"] == "promotion"
+
     for rec in records:
         shot = run.dir / rec["screenshot_path"]
         assert shot.read_bytes()[:4] == PNG_MAGIC
@@ -126,8 +130,30 @@ def test_collect_posts(tmp_path):
     assert saved["run"]["status"] == "completed"
 
 
+def test_promotions_are_left_out_by_default(tmp_path):
+    opts = SearchOptions(keyword="solar panel", max_results=10).normalized()
+
+    async def body(page):
+        run = RunWriter(tmp_path, opts.keyword, {"scope": "search:posts"})
+        records = await collect_posts(page, opts, run, deadline=time.monotonic() + 120)
+        run.finish("completed")
+        return run, records
+
+    run, records = run_on_page("search.html", body)
+    left_out = run.stats.get("skipped_promotion", 0)
+    assert left_out >= 2 and run.stats["verified"] == 7
+    assert run.stats["saved"] == run.stats["screenshots"] == 7 - left_out     # no screenshot of what was left out
+    assert all(r["content_type"] is None for r in records)
+    assert any("Budget is 500k" in r["text"] for r in records)               # the question is kept
+    assert not any(r["text"].startswith(("Selling solar panel", "FOR SALE")) for r in records)
+    saved = json.loads((run.dir / "results.json").read_text(encoding="utf-8"))["run"]
+    assert len(saved["filtered_examples"]) == left_out
+    assert all(e["content_type"] == "promotion" and e["reason"] for e in saved["filtered_examples"])
+    assert run.summary()["filtered_out"] == {"promotion": left_out}
+
+
 def test_save_unverified_keeps_fuzzy_results(tmp_path):
-    opts = SearchOptions(keyword="solar panel", max_results=10, save_unverified=True).normalized()
+    opts = SearchOptions(keyword="solar panel", max_results=10, save_unverified=True, include_types="all").normalized()
 
     async def body(page):
         run = RunWriter(tmp_path, opts.keyword, {})
@@ -175,7 +201,7 @@ def test_blur_names_marks_only_profile_links_and_cleans_up(tmp_path):
 
 
 def test_collect_comments(tmp_path):
-    opts = SearchOptions(keyword="solar panel", include_comments=True).normalized()
+    opts = SearchOptions(keyword="solar panel", include_comments=True, include_types="all").normalized()
     parent = {
         "post_url": "https://www.facebook.com/groups/123456/posts/789012/",
         "group_name": "Solar Users Group",
@@ -209,6 +235,7 @@ def test_collect_comments(tmp_path):
     assert comment["posted_at"].startswith("2026-10-02T09:15:00")
 
     assert all_only["author_name"] == "Zain"                # only listed under "All comments"
+    assert all_only["content_type"] == "promotion" and comment["content_type"] is None
     assert all_only["time_exact"] is None                   # not Sara's lingering tooltip
     assert all_only["posted_at_precision"] == "hour"        # from "5h"
 
@@ -217,6 +244,20 @@ def test_collect_comments(tmp_path):
     assert reply["author_name"] == "Kamran"
     for rec in run.results:
         assert (run.dir / rec["screenshot_path"]).read_bytes()[:4] == PNG_MAGIC
+
+
+def test_comment_ads_are_left_out(tmp_path):
+    opts = SearchOptions(keyword="solar panel", include_comments=True).normalized()
+
+    async def body(page):
+        run = RunWriter(tmp_path, opts.keyword, {})
+        n = await collect_comments_on_page(page, {"post_url": "https://www.facebook.com/groups/123456/posts/789012/",
+                                                  "text": "Which brand of inverter do you use?"}, opts, run, set())
+        return run, n
+
+    run, n = run_on_page("post.html", body)
+    assert n == 2 and run.stats["skipped_promotion"] == 1    # "Cheap solar panel deals, DM me"
+    assert [r["author_name"] for r in run.results] == ["Sara Ahmed", "Kamran"]
 
 
 def test_post_without_comments_is_skipped_quietly(tmp_path):
@@ -299,7 +340,8 @@ def test_highlight_marks_words_joined_by_special_characters():
 
 
 def test_include_name_matches_keeps_name_only_posts_and_profile_cards(tmp_path):
-    opts = SearchOptions(keyword="solar panel", max_results=20, include_name_matches=True).normalized()
+    opts = SearchOptions(keyword="solar panel", max_results=20, include_name_matches=True,
+                         include_types="all").normalized()
 
     async def body(page):
         run = RunWriter(tmp_path, opts.keyword, {})

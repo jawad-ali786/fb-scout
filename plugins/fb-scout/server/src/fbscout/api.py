@@ -85,11 +85,12 @@ async def _search_and_import(opts: SearchOptions, progress: Progress = None) -> 
     if result.get("run_dir"):
         result["dataset"] = import_run(result["run_dir"], opts.output_dir)
         if opts.only_negative and result.get("run_id"):
+            kept = f", include_types={list(opts.normalized().include_types)}" if opts.include_types else ""
             result["next_step"] = (
                 "The user wants only negative posts. Label every item of this run: call fb_label_queue with "
-                f"run_id='{result['run_id']}', read each text, and save labels (negative / neutral / positive with a "
-                "short reason) with fb_label_items; repeat until nothing remains. Then report only "
-                f"fb_dataset_items(run_id='{result['run_id']}', sentiment='negative').")
+                f"run_id='{result['run_id']}'{kept}, read each text, and save labels (negative / neutral / positive "
+                "with a short reason) with fb_label_items; repeat until nothing remains. Then report only "
+                f"fb_dataset_items(run_id='{result['run_id']}', sentiment='negative'{kept}).")
     return result
 
 
@@ -135,12 +136,16 @@ def dataset_import(output_dir: str | None = None) -> dict:
         return {"ok": not result["errors"], "dataset": str(ds.path.resolve()), **result, "items_total": ds.count()}
 
 
-def dataset_stats(output_dir: str | None = None, keyword: str | None = None) -> dict:
+def dataset_stats(output_dir: str | None = None, keyword: str | None = None,
+                  include_types: str | list[str] | None = None) -> dict:
     ds, error = _open_dataset(output_dir)
     if error:
         return error
-    with ds:
-        return {"ok": True, **ds.stats(keyword)}
+    try:
+        with ds:
+            return {"ok": True, **ds.stats(keyword, include_types)}
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
 
 
 def dataset_items(output_dir: str | None = None, limit: int = 50, offset: int = 0, full_text: bool = False,
@@ -150,14 +155,21 @@ def dataset_items(output_dir: str | None = None, limit: int = 50, offset: int = 
         return error
     root = _root(output_dir).resolve()
     limit, offset = max(1, min(500, int(limit))), max(0, int(offset))
-    with ds:
-        rows = ds.items(limit=limit, offset=offset, text_chars=None if full_text else 400, **filters)
-        total = ds.count(**filters)
+    try:
+        with ds:
+            rows = ds.items(limit=limit, offset=offset, text_chars=None if full_text else 400, **filters)
+            total = ds.count(**filters)
+            hidden = ds.hidden(**filters)
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
     for r in rows:
         r.pop("url_key", None)
         r.pop("content_key", None)
         r["screenshot_file"] = str(root / r["screenshot_path"]) if r.get("screenshot_path") else None
-    return {"ok": True, "total": total, "returned": len(rows), "offset": offset, "items": rows}
+    out = {"ok": True, "total": total, "returned": len(rows), "offset": offset, "items": rows}
+    if hidden:
+        out["hidden_by_content_type"] = hidden
+    return out
 
 
 def dataset_exclude(item_ids: list[str], reason: str, output_dir: str | None = None) -> dict:
@@ -173,13 +185,17 @@ def dataset_exclude(item_ids: list[str], reason: str, output_dir: str | None = N
 
 
 def label_queue(output_dir: str | None = None, keyword: str | None = None, run_id: str | None = None,
-                batch_id: str | None = None, limit: int = 20) -> dict:
+                batch_id: str | None = None, limit: int = 20, include_types: str | list[str] | None = None) -> dict:
     ds, error = _open_dataset(output_dir)
     if error:
         return error
     root = _root(output_dir).resolve()
-    with ds:
-        result = ds.label_queue(keyword=keyword, run_id=run_id, batch_id=batch_id, limit=max(1, min(50, int(limit))))
+    try:
+        with ds:
+            result = ds.label_queue(keyword=keyword, run_id=run_id, batch_id=batch_id, include_types=include_types,
+                                    limit=max(1, min(50, int(limit))))
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
     for item in result["to_label"]:
         item["screenshot_file"] = str(root / item["screenshot_path"]) if item.get("screenshot_path") else None
     return {"ok": True, **result}

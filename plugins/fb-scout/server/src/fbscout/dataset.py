@@ -18,6 +18,11 @@ Importing is idempotent: importing the same run again changes nothing.
 Records can be excluded (false positives, irrelevant posts): they are listed with
 a reason in exclusions.json next to the dataset, and every import skips them.
 The run folders are never changed, so they stay the untouched evidence.
+
+Every item is also checked by the content filter: promotions, job posts, giveaways
+and spam get a content_type (with the reason) and are hidden from counts, lists,
+label queues and exports unless include_types asks for them. Older runs are checked
+on import too, and everything is re-checked when the filter's rules change.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
+from .content_filter import CONTENT_TYPES, RULES_VERSION, classify, parse_types
 from .dates import finer, resolve
 from .extract import clean_text
 from .lang import detect_language
@@ -89,7 +95,9 @@ KIND_RANK = ("group_post", "post", "reel", "video", "event", "marketplace", "com
              "profile", "unknown")
 
 # Columns added after the first version: (name, type) for existing dataset files.
-ADDED_COLUMNS = (("price", "TEXT"), ("location", "TEXT"), ("condition", "TEXT"))
+ADDED_COLUMNS = (("price", "TEXT"), ("location", "TEXT"), ("condition", "TEXT"),
+                 ("content_type", "TEXT"), ("content_reason", "TEXT"))
+NOT_CHECKED_KINDS = ("marketplace", "profile")   # listings are for sale by definition; cards have no post text
 
 # Filled in from a later sighting when an item doesn't have them yet.
 FILL_FIELDS = ("post_url", "comment_url", "parent_post_url", "author_name", "author_url",
@@ -212,6 +220,16 @@ def _split_list(value: str | list[str] | None) -> list[str]:
     return [v.strip() for v in items if v and v.strip()]
 
 
+def _content_clause(include_types, column: str = "content_type") -> tuple[str | None, list]:
+    """Ordinary posts, plus the content types asked for ('all' = everything)."""
+    shown = parse_types(include_types)
+    if set(shown) == set(CONTENT_TYPES):
+        return None, []
+    if not shown:
+        return f"{column} IS NULL", []
+    return f"({column} IS NULL OR {column} IN ({', '.join('?' * len(shown))}))", list(shown)
+
+
 class Dataset:
     def __init__(self, path: Path | str):
         self.path = Path(path)
@@ -224,6 +242,10 @@ class Dataset:
             if column not in have:
                 self.conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
         self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
+        rules = self.conn.execute("SELECT value FROM meta WHERE key = 'content_rules'").fetchone()
+        if not rules or rules[0] != RULES_VERSION:   # new column, or the filter's rules changed
+            self._classify_content()
+            self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('content_rules', ?)", (RULES_VERSION,))
         self.conn.commit()
         self.exclusions_path = self.path.with_name(EXCLUSIONS_FILE)
         self._exclusions = self._load_exclusions()
@@ -275,6 +297,7 @@ class Dataset:
             counts[outcome] += 1
             touched.add(item_id)
         self._refresh_seen(touched)
+        self._classify_content(touched)
         self._sync_labels()
         self.conn.commit()
         return {"run_id": run_id, "records": len(results), **counts}
@@ -385,6 +408,27 @@ class Dataset:
             upd["screenshot_path"] = shot
         return upd
 
+    def _classify_content(self, item_ids: set[str] | None = None) -> None:
+        """Tag promotions, job posts, giveaways and spam (content_filter). NULL = an ordinary post."""
+        keywords: dict[str, list[str]] = {}
+        if item_ids is None:
+            rows = self.conn.execute("SELECT item_id, kind, text, image_text, author_name FROM items").fetchall()
+            for item_id, kw in self.conn.execute("SELECT DISTINCT item_id, keyword FROM sightings"):
+                keywords.setdefault(item_id, []).append(kw or "")
+        else:
+            rows = []
+            for item_id in item_ids:
+                rows += self.conn.execute("SELECT item_id, kind, text, image_text, author_name FROM items "
+                                          "WHERE item_id = ?", (item_id,)).fetchall()
+                keywords[item_id] = [r[0] or "" for r in self.conn.execute(
+                    "SELECT DISTINCT keyword FROM sightings WHERE item_id = ?", (item_id,))]
+        for r in rows:
+            ctype = reason = None
+            if r["kind"] not in NOT_CHECKED_KINDS:
+                ctype, reason = classify(r["text"], r["image_text"], r["author_name"], keywords.get(r["item_id"]))
+            self.conn.execute("UPDATE items SET content_type = ?, content_reason = ? WHERE item_id = ?",
+                              (ctype, reason, r["item_id"]))
+
     # ---- exclusions -----------------------------------------------------------
 
     def _load_exclusions(self) -> dict[tuple[str, str], dict]:
@@ -437,7 +481,7 @@ class Dataset:
         self._save_exclusions()
         self.conn.commit()
         return {"excluded_items": len(excluded), "excluded_records": records, "not_found": missing,
-                "exclusions_file": str(self.exclusions_path.resolve()), "items_left": self.count()}
+                "exclusions_file": str(self.exclusions_path.resolve()), "items_left": self.count(include_types="all")}
 
     # ---- sentiment labels ---------------------------------------------------
     # Set by an AI agent (or a person) per item and keyword, because a post can be
@@ -476,9 +520,14 @@ class Dataset:
                                    e.get("labeled_at")))
 
     def label_queue(self, *, keyword: str | None = None, run_id: str | None = None, batch_id: str | None = None,
-                    limit: int = 20, text_chars: int = 1500) -> dict:
-        """Items that still need a sentiment label for the keyword(s) that found them."""
+                    include_types: str | list[str] | None = None, limit: int = 20, text_chars: int = 1500) -> dict:
+        """Items that still need a sentiment label for the keyword(s) that found them (without promotions,
+        job posts... unless include_types)."""
         clauses, params = ["l.item_id IS NULL"], []
+        content, content_params = _content_clause(include_types, "i.content_type")
+        if content:
+            clauses.append(content)
+            params.extend(content_params)
         if keyword:
             clauses.append("s.keyword = ? COLLATE NOCASE")
             params.append(keyword)
@@ -488,7 +537,7 @@ class Dataset:
         if batch_id:
             clauses.append("r.batch_id = ?")
             params.append(batch_id)
-        base = (" FROM sightings s JOIN runs r ON r.run_id = s.run_id "
+        base = (" FROM sightings s JOIN runs r ON r.run_id = s.run_id JOIN items i ON i.item_id = s.item_id "
                 "LEFT JOIN labels l ON l.item_id = s.item_id AND l.keyword = s.keyword COLLATE NOCASE "
                 "WHERE " + " AND ".join(clauses))
         pairs = self.conn.execute("SELECT DISTINCT s.item_id, s.keyword" + base + " ORDER BY s.item_id, s.keyword",
@@ -570,8 +619,13 @@ class Dataset:
     def _where(keyword: str | None = None, kind: str | list[str] | None = None,
                language: str | list[str] | None = None, group: str | None = None, since: str | None = None,
                until: str | None = None, contains: str | None = None, sentiment: str | list[str] | None = None,
-               run_id: str | None = None, batch_id: str | None = None) -> tuple[str, list]:
+               run_id: str | None = None, batch_id: str | None = None,
+               include_types: str | list[str] | None = None) -> tuple[str, list]:
         clauses, params = [], []
+        content, content_params = _content_clause(include_types)
+        if content:
+            clauses.append(content)
+            params.extend(content_params)
         if run_id:
             clauses.append("item_id IN (SELECT item_id FROM sightings WHERE run_id = ?)")
             params.append(run_id)
@@ -615,15 +669,15 @@ class Dataset:
                f"GROUP BY k ORDER BY n DESC, k" + (f" LIMIT {int(limit)}" if limit else ""))
         return {row["k"]: row["n"] for row in self.conn.execute(sql, params)}
 
-    def stats(self, keyword: str | None = None) -> dict:
-        where, params = self._where(keyword=keyword)
+    def stats(self, keyword: str | None = None, include_types: str | list[str] | None = None) -> dict:
+        where, params = self._where(keyword=keyword, include_types=include_types)
         total = self.conn.execute(f"SELECT COUNT(*) FROM items {where}", params).fetchone()[0]
         seen = self.conn.execute(f"SELECT MIN(first_seen), MAX(last_seen), SUM(times_seen > 1), "
                                  f"SUM(posted_date IS NULL) FROM items {where}", params).fetchone()
-        kw_sql = "SELECT keyword, COUNT(DISTINCT item_id) AS n FROM sightings"
-        kw_params: list = []
+        kw_sql = f"SELECT keyword, COUNT(DISTINCT item_id) AS n FROM sightings WHERE item_id IN (SELECT item_id FROM items {where})"
+        kw_params: list = list(params)
         if keyword:
-            kw_sql += " WHERE keyword = ? COLLATE NOCASE"
+            kw_sql += " AND keyword = ? COLLATE NOCASE"
             kw_params.append(keyword)
         by_keyword = {r["keyword"]: r["n"] for r in self.conn.execute(kw_sql + " GROUP BY keyword ORDER BY n DESC",
                                                                       kw_params)}
@@ -649,11 +703,20 @@ class Dataset:
             "by_kind": self._count_by("kind", where, params),
             "by_language": self._count_by("language", where, params),
             "by_sentiment": by_sentiment,
-            "not_labeled": total - self.count(keyword=keyword, sentiment=list(SENTIMENTS)),
+            "not_labeled": total - self.count(keyword=keyword, sentiment=list(SENTIMENTS), include_types=include_types),
             "by_month_posted": dict(sorted(self._count_by(month, where, params).items())),
             "top_groups": self._count_by("group_name", (where + " AND " if where else "WHERE ")
                                          + "group_name IS NOT NULL", params, limit=10),
+            "hidden_by_content_type": self.hidden(keyword=keyword, include_types=include_types),
         }
+
+    def hidden(self, **filters) -> dict:
+        """Items the content filter hides from this view: {"promotion": 12, ...}."""
+        shown = set(parse_types(filters.get("include_types")))
+        where, params = self._where(**{**filters, "include_types": "all"})
+        counts = self._count_by("content_type", (where + " AND " if where else "WHERE ") + "content_type IS NOT NULL",
+                                params)
+        return {k: n for k, n in counts.items() if k not in shown}
 
     def items(self, *, limit: int | None = 50, offset: int = 0, text_chars: int | None = 400,
               **filters) -> list[dict]:

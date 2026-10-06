@@ -130,6 +130,18 @@ By default a post only counts when the keyword is in the post itself. Results wh
 only in a person's, page's or group's name (and profile / group-member cards) are left out;
 switch them on with `names` / `include_name_matches` / `--name-matches`.
 
+**Ads, job posts, giveaways and spam are left out too**, because they aren't people talking about
+the keyword: items or services for sale, price lists, the brand page's own posts and announcements
+(`promotion`), hiring posts (`job`), "tag 3 friends" contests (`giveaway`), earn-money and
+forex offers (`spam`). Someone describing their own experience or asking a question is kept even
+when the post mentions a price or a phone number. Each search reports how many were left out
+(`filtered_out`), and `results.json` lists the first ones with the reason, so the filter can be
+checked. To keep any of them, say so (*"include ads"*, *"job posts too"*) or pass
+`include_types` / `--include promotion,job` (`all` keeps everything). The dataset hides them the
+same way unless asked for. Marketplace listings are never filtered. The rules are in
+[`content_filter.py`](plugins/fb-scout/server/src/fbscout/content_filter.py) and described in
+[docs/DATASET.md](docs/DATASET.md#content-filter).
+
 **First run:** the agent sees you're not logged in and logs you in once.
 Pick one of three ways:
 
@@ -195,12 +207,12 @@ Set `FBSCOUT_OUTPUT_DIR` for the scheduled task so results land in the same fold
 uv run fbscout login                      # normal Chrome window, close it after logging in
 uv run fbscout login --from-firefox       # or: copy the login from Firefox
 uv run fbscout login --cookies file.txt   # or: import an exported cookie file
-uv run fbscout search "solar panel" --max 20 [--group URL] [--match all] [--comments] [--name-matches] [--blur-names] [--show-browser]
+uv run fbscout search "solar panel" --max 20 [--group URL] [--match all] [--comments] [--name-matches] [--include promotion,job|all] [--blur-names] [--show-browser]
 uv run fbscout search "solar panel" --marketplace [--location karachi] [--listing-details]
 uv run fbscout batch study.json [--dry-run]
 uv run fbscout runs
-uv run fbscout db stats [--keyword K]
-uv run fbscout db export [--format csv|jsonl|parquet] [--anonymize] [--keyword K] [--language ur,ur-Latn] [--since 2026-09-01]
+uv run fbscout db stats [--keyword K] [--include all]
+uv run fbscout db export [--format csv|jsonl|parquet] [--anonymize] [--keyword K] [--language ur,ur-Latn] [--since 2026-09-01] [--include promotion]
 uv run fbscout db exclude i_... --reason "off-topic"   # leave items out (run folders stay unchanged)
 uv run fbscout db label i_... --sentiment negative --reason "..."   # label by hand (e.g. a gold set)
 uv run fbscout db export --sentiment negative --keyword "Brand X"    # only the negatives
@@ -225,14 +237,14 @@ uv run fbscout db import                  # runs made before v0.2, or copied fro
 |---|---|
 | `fb_status` | Logged in? Which browser? Where do results go? |
 | `fb_login` | `method`: `browser` (normal Chrome window, close it when logged in), `firefox` (copy login), `cookie_file` (+ `cookie_file` path); `force` to switch account |
-| `fb_search` | `keyword`, `max_results`, `source` (`posts`/`marketplace`), `group_url`, `match_mode` (`phrase`/`all`/`any`), `include_comments`, `max_comment_posts`, `include_name_matches`, `marketplace_location`, `listing_details`, `only_negative`, `output_dir`, `save_unverified`, `highlight`, `max_minutes`, `show_browser`, `blur_names` |
+| `fb_search` | `keyword`, `max_results`, `source` (`posts`/`marketplace`), `group_url`, `match_mode` (`phrase`/`all`/`any`), `include_comments`, `max_comment_posts`, `include_name_matches`, `marketplace_location`, `listing_details`, `only_negative`, `include_types`, `output_dir`, `save_unverified`, `highlight`, `max_minutes`, `show_browser`, `blur_names` |
 | `fb_batch` | A study: `study_file`, or `keywords` + `group_urls` (+ `include_marketplace` and the search options); `dry_run` shows the plan |
 | `fb_list_runs` | Previous runs with stats |
-| `fb_dataset_stats` | Distinct items by keyword, kind, language, month posted, group |
-| `fb_dataset_items` | Items with filters (`keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`, `since`, `until`, `contains`), paged |
-| `fb_label_queue` | Items that still need a sentiment label, with their text |
+| `fb_dataset_stats` | Distinct items by keyword, kind, language, month posted, group; how many are hidden as ads / jobs / ... (`include_types` to count them) |
+| `fb_dataset_items` | Items with filters (`keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`, `since`, `until`, `contains`, `include_types`), paged |
+| `fb_label_queue` | Items that still need a sentiment label, with their text (ads etc. only with `include_types`) |
 | `fb_label_items` | Save labels: negative / neutral / positive + reason (rubric in the tool description) |
-| `fb_export` | CSV / JSONL / Parquet with the same filters; `anonymize` |
+| `fb_export` | CSV / JSONL / Parquet with the same filters (incl. `include_types`); `anonymize` |
 | `fb_exclude_items` | Leave items out of the dataset with a reason (kept in `exclusions.json`) |
 | `fb_import_runs` | Import existing run folders into the dataset (safe to repeat) |
 

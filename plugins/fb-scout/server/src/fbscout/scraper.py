@@ -17,6 +17,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from .browser import Session, check_page, is_logged_in, open_browser
 from .capture import capture_element
+from .content_filter import classify, parse_types
 from .config import default_output_root, pace_factor
 from .dates import resolve
 from .errors import FBScoutError, NotLoggedIn
@@ -39,6 +40,7 @@ Progress = Callable[[str, int, int], Awaitable[None]] | None
 MAX_RESULTS_CAP = 100
 MAX_COMMENTS_PER_POST = 20
 MAX_COMMENT_EXPAND_CLICKS = 15
+MAX_FILTERED_EXAMPLES = 50   # left-out posts listed in results.json, to check the content filter
 SOURCES = ("posts", "marketplace")
 
 BROWSER_TZ_JS = "() => ({tz: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: -new Date().getTimezoneOffset()})"
@@ -64,6 +66,7 @@ class SearchOptions:
     listing_details: bool = False            # open each kept listing for description, seller, condition, date
     include_name_matches: bool = False       # also keep keyword-only-in-a-name posts and profile/member cards
     only_negative: bool = False              # the user wants negative posts only: label, then report negatives
+    include_types: tuple[str, ...] = ()      # also keep these content types (promotion, job, giveaway, spam)
 
     def normalized(self) -> "SearchOptions":
         kw = clean_keyword(self.keyword)
@@ -96,6 +99,7 @@ class SearchOptions:
             listing_details=bool(self.listing_details),
             include_name_matches=bool(self.include_name_matches),
             only_negative=bool(self.only_negative),
+            include_types=parse_types(self.include_types),
         )
 
     @property
@@ -149,7 +153,8 @@ def _verify(opts: SearchOptions, data: Extracted) -> tuple[MatchResult, str | No
 
 def _record(*, rid: str, opts: SearchOptions, data: Extracted, match: MatchResult, matched_in: str | None,
             kind: str, source: str, rank: int, shot_name: str | None, post_url: str | None, run: RunWriter,
-            parent_post_url: str | None = None, group_name: str | None = None, group_url: str | None = None) -> dict:
+            parent_post_url: str | None = None, group_name: str | None = None, group_url: str | None = None,
+            content_type: str | None = None, content_reason: str | None = None) -> dict:
     captured_at = utc_now_iso()
     posted = resolve(data.time_exact, data.time_text, captured_at, run.meta.get("browser_utc_offset_minutes"))
     return {
@@ -176,12 +181,29 @@ def _record(*, rid: str, opts: SearchOptions, data: Extracted, match: MatchResul
         "price": None,          # Marketplace listings only
         "location": None,
         "condition": None,
+        "content_type": content_type,   # promotion / job / giveaway / spam, kept because include_types asked for it
+        "content_reason": content_reason,
         "screenshot_name": shot_name,
         "screenshot_path": f"screenshots/{shot_name}" if shot_name else None,
         "source": source,
         "search_rank": rank,
         "captured_at": captured_at,
     }
+
+
+def _content_check(opts: SearchOptions, run: RunWriter, data: Extracted) -> tuple[str | None, str | None, bool]:
+    """(content type, reason, leave out?). Promotions, job posts, giveaways and spam are left out unless
+    include_types keeps them; they are counted (stats.skipped_<type>) and the first ones listed in
+    results.json (run.filtered_examples), so the filter can be checked."""
+    ctype, reason = classify(data.text, data.image_text, data.author_name, opts.keyword)
+    if not ctype or ctype in opts.include_types:
+        return ctype, reason, False
+    run.stats[f"skipped_{ctype}"] = run.stats.get(f"skipped_{ctype}", 0) + 1
+    examples = run.meta.setdefault("filtered_examples", [])
+    if len(examples) < MAX_FILTERED_EXAMPLES:
+        examples.append({"content_type": ctype, "reason": reason, "kind": data.kind, "author_name": data.author_name,
+                         "url": data.comment_url or data.post_url, "text": (data.text or "")[:200]})
+    return ctype, reason, True
 
 
 async def _screenshot(page: Page, el, run: RunWriter, rank: int, kind: str, rid: str, terms: list[str], opts: SearchOptions) -> str | None:
@@ -260,6 +282,11 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
                 run.stats["verified"] += 1
             elif not opts.save_unverified:
                 continue
+            ctype = creason = None
+            if data.kind != "profile":
+                ctype, creason, leave_out = _content_check(opts, run, data)
+                if leave_out:
+                    continue
 
             if data.kind != "profile":
                 try:   # now reveal the permalink and the exact date by hovering
@@ -278,7 +305,7 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
             record = _record(rid=rid, opts=opts, data=data, match=match, matched_in=matched_in, kind=kind,
                              source=source, rank=rank, shot_name=shot, post_url=data.post_url, run=run,
                              group_name=data.group_name or run.meta.get("group_name"),
-                             group_url=data.group_url or opts.group_url)
+                             group_url=data.group_url or opts.group_url, content_type=ctype, content_reason=creason)
             run.add(record)
             saved.append(record)
             if progress:
@@ -338,6 +365,9 @@ async def collect_comments_on_page(page: Page, parent: dict, opts: SearchOptions
         if key in seen:
             continue
         seen.add(key)
+        ctype, creason, leave_out = _content_check(opts, run, data)
+        if leave_out:
+            continue
         data.time_exact = await hover_time_exact(page, el, data.time_link_index)
         rid = record_id(key)
         rank = run.stats["saved"] + 1
@@ -345,7 +375,8 @@ async def collect_comments_on_page(page: Page, parent: dict, opts: SearchOptions
         record = _record(rid=rid, opts=opts, data=data, match=match, matched_in="text", kind=data.kind,
                          source="comments", rank=rank, shot_name=shot, post_url=parent.get("post_url"), run=run,
                          parent_post_url=parent.get("post_url"),
-                         group_name=parent.get("group_name"), group_url=parent.get("group_url"))
+                         group_name=parent.get("group_name"), group_url=parent.get("group_url"),
+                         content_type=ctype, content_reason=creason)
         run.add(record)
         run.stats["comments_saved"] += 1
         count += 1
@@ -541,6 +572,12 @@ async def run_search(opts: SearchOptions, progress: Progress = None) -> dict:
                     if run.stats["candidates_seen"] == 0:
                         run.warn("No posts were found on the results page.")
                         await dump_debug(page, run, "no_candidates")
+                    left_out = sum(v for k, v in run.stats.items() if k.startswith("skipped_") and k != "skipped_not_posts")
+                    if left_out and len(posts) < opts.max_results:
+                        run.warn(f"{left_out} of the posts Facebook returned were ads, the brand's own posts, job posts, "
+                                 "giveaways or spam, and were left out. For what people say, search the keyword with a "
+                                 "complaint or question word (match_mode 'all'), or inside a group; include_types keeps "
+                                 "those posts.")
                     if opts.include_comments and posts:
                         await collect_comments(session, posts, opts, run, deadline, progress)
                 status = "completed"

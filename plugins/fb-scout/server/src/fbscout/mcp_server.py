@@ -21,7 +21,8 @@ mcp = MCPServer(
     instructions=(
         "Facebook keyword research tools. Typical flow: fb_status → (fb_login if not logged in) → fb_search, "
         "or fb_batch for several keywords/groups/Marketplace. Every run is added to a SQLite dataset (deduplicated "
-        "across runs): read it with fb_dataset_stats / fb_dataset_items, export it with fb_export. For negative "
+        "across runs): read it with fb_dataset_stats / fb_dataset_items, export it with fb_export. Promotions, "
+        "job posts, giveaways and spam are left out everywhere unless include_types asks for them. For negative "
         "posts only: label items with fb_label_queue + fb_label_items, then filter sentiment='negative'. "
         "Only one browser run at a time. If a tool returns error 'checkpoint' or 'blocked', stop and tell the "
         "user; never retry in a loop."
@@ -79,6 +80,7 @@ async def fb_search(
     marketplace_location: str | None = None,
     listing_details: bool = False,
     only_negative: bool = False,
+    include_types: list[str] | None = None,
     output_dir: str | None = None,
     save_unverified: bool = False,
     highlight: bool = True,
@@ -91,6 +93,8 @@ async def fb_search(
     text Facebook read from the post's images), screenshot each match (keyword highlighted) and write
     results.json with metadata (post_url, kind, author, group, time, posted_at, language, text,
     screenshot_name). The run is also added to the dataset (see fb_dataset_stats).
+    Promotions, job posts, giveaways and spam are left out (counted in `filtered_out`, examples with the
+    reason in results.json) unless include_types keeps them; Marketplace listings are never filtered.
 
     - max_results: matches to save (1-100).
     - source: 'posts' (default; global Posts search, or inside `group_url`) or 'marketplace'
@@ -107,6 +111,9 @@ async def fb_search(
     - listing_details: open each kept listing for its description, seller, condition and date (slower).
     - only_negative: the user wants negative posts only. Everything is still saved; the result has a
       `next_step`: label the run with fb_label_queue / fb_label_items, then report only the negatives.
+    - include_types: content left out by default that should be kept too: 'promotion' (ads, items or
+      services for sale, price lists, the brand page's own posts), 'job', 'giveaway', 'spam', or 'all'.
+      Only when the user asks for those (e.g. "include ads", "job posts too").
     - output_dir: root folder for results (default: <project>/fb-scout-output).
     - save_unverified: also save results Facebook returned that do not contain the keyword.
     - blur_names: blur names and profile pictures of people/pages in the screenshots.
@@ -134,6 +141,7 @@ async def fb_search(
         listing_details=listing_details,
         include_name_matches=include_name_matches,
         only_negative=only_negative,
+        include_types=include_types or (),
     )
     return await api.search(opts, progress)
 
@@ -148,6 +156,7 @@ async def fb_batch(
     marketplace_location: str | None = None,
     listing_details: bool = False,
     include_name_matches: bool = False,
+    include_types: list[str] | None = None,
     max_results: int = 20,
     match_mode: Literal["phrase", "all", "any"] = "phrase",
     include_comments: bool = False,
@@ -166,7 +175,8 @@ async def fb_batch(
     Give either `study_file` (a JSON study file, see README) or `keywords` (+ optional `group_urls`).
     Use dry_run=true first to show the plan and the estimated time. Long: several minutes per search.
     Limit: 50 searches per batch. To keep only negative posts, label the batch afterwards
-    (fb_label_queue with batch_id) and filter with sentiment='negative'."""
+    (fb_label_queue with batch_id) and filter with sentiment='negative'. Promotions, job posts, giveaways
+    and spam are left out unless include_types ('promotion', 'job', 'giveaway', 'spam' or 'all') keeps them."""
     try:
         if study_file:
             if keywords or group_urls:
@@ -177,7 +187,8 @@ async def fb_batch(
                 "name": "adhoc", "keywords": keywords or [], "groups": group_urls or [],
                 "include_global": include_global, "include_marketplace": include_marketplace,
                 "marketplace_location": marketplace_location, "listing_details": listing_details,
-                "include_name_matches": include_name_matches, "max_results": max_results,
+                "include_name_matches": include_name_matches, "include_types": include_types or [],
+                "max_results": max_results,
                 "match_mode": match_mode, "include_comments": include_comments,
                 "max_comment_posts": max_comment_posts, "max_minutes_per_search": max_minutes_per_search,
                 "blur_names": blur_names, "output_dir": output_dir,
@@ -196,11 +207,13 @@ def fb_list_runs(output_dir: str | None = None, keyword: str | None = None, limi
 
 
 @mcp.tool()
-def fb_dataset_stats(keyword: str | None = None, output_dir: str | None = None) -> dict:
+def fb_dataset_stats(keyword: str | None = None, include_types: list[str] | None = None,
+                     output_dir: str | None = None) -> dict:
     """Overview of the dataset (all runs, duplicates merged): number of distinct posts/comments, how
     many were seen in more than one run, and counts by keyword, kind, language, sentiment label, month
-    posted and group."""
-    return api.dataset_stats(output_dir, keyword)
+    posted and group. Promotions, job posts, giveaways and spam are not counted unless include_types
+    names them ('promotion', 'job', 'giveaway', 'spam' or 'all'); `hidden_by_content_type` says how many."""
+    return api.dataset_stats(output_dir, keyword, include_types)
 
 
 @mcp.tool()
@@ -215,6 +228,7 @@ def fb_dataset_items(
     since: str | None = None,
     until: str | None = None,
     contains: str | None = None,
+    include_types: list[str] | None = None,
     limit: int = 50,
     offset: int = 0,
     full_text: bool = False,
@@ -226,11 +240,13 @@ def fb_dataset_items(
 
     Filters: keyword; kind, language and sentiment as comma-separated lists (e.g. 'post,group_post',
     'ur,ur-Latn', 'negative'); run_id (items of one run) or batch_id (of one study); group (name/URL contains); since/until as
-    YYYY-MM-DD on the posted date; contains (text, image text, price or location). Page through with
-    limit (max 500) and offset."""
+    YYYY-MM-DD on the posted date; contains (text, image text, price or location); include_types: also
+    show promotions, job posts, giveaways or spam ('promotion', 'job', 'giveaway', 'spam' or 'all'; hidden
+    by default, counted in `hidden_by_content_type`; each item has content_type and content_reason).
+    Page through with limit (max 500) and offset."""
     return api.dataset_items(output_dir, limit, offset, full_text, keyword=keyword, kind=kind, language=language,
                              sentiment=sentiment, run_id=run_id, batch_id=batch_id, group=group, since=since,
-                             until=until, contains=contains)
+                             until=until, contains=contains, include_types=include_types)
 
 
 @mcp.tool()
@@ -238,13 +254,15 @@ def fb_label_queue(
     run_id: str | None = None,
     keyword: str | None = None,
     batch_id: str | None = None,
+    include_types: list[str] | None = None,
     limit: int = 20,
     output_dir: str | None = None,
 ) -> dict:
     """Items that still need a sentiment label (for the keyword that found them), with their text, so you
     can read and judge them. Narrow it to one run (run_id from fb_search), a keyword or a study (batch_id).
+    Promotions, job posts, giveaways and spam are skipped unless include_types names them.
     `remaining` says how many are left in total. Save your judgements with fb_label_items."""
-    return api.label_queue(output_dir, keyword, run_id, batch_id, limit)
+    return api.label_queue(output_dir, keyword, run_id, batch_id, limit, include_types)
 
 
 @mcp.tool()
@@ -276,6 +294,7 @@ def fb_export(
     since: str | None = None,
     until: str | None = None,
     contains: str | None = None,
+    include_types: list[str] | None = None,
     file: str | None = None,
     output_dir: str | None = None,
 ) -> dict:
@@ -283,11 +302,12 @@ def fb_export(
     sentiment labels, listing price/location/condition and all metadata.
     csv opens directly in Excel (UTF-8, Urdu works); parquet needs the optional pyarrow extra.
     anonymize=true replaces authors with stable pseudonyms (author_id) and drops all URLs; names inside
-    the text and screenshots are not removed. Same filters as fb_dataset_items (e.g. sentiment='negative').
+    the text and screenshots are not removed. Same filters as fb_dataset_items (e.g. sentiment='negative';
+    promotions, job posts, giveaways and spam only with include_types).
     Default file: <output>/_exports/fbscout_<keyword|all>_<timestamp>.<format>."""
     return api.dataset_export(output_dir, format, file, anonymize, keyword=keyword, kind=kind, language=language,
                               sentiment=sentiment, run_id=run_id, batch_id=batch_id, group=group, since=since,
-                              until=until, contains=contains)
+                              until=until, contains=contains, include_types=include_types)
 
 
 @mcp.tool()

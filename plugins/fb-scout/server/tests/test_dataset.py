@@ -26,8 +26,9 @@ def rec(rid, **kw):
 
 
 # Long enough that Facebook would cut it behind "See more" (the fingerprint uses the first 160 letters).
-LONG = ("Selling solar panel stock in Karachi at wholesale rates, all brands available: Jinko, Longi, Canadian. "
-        "Delivery all over Pakistan, warranty card with every panel. Contact 0300-0000000 for details")
+LONG = ("Two years with a solar panel system in Karachi now: Jinko panels, a hybrid inverter and lithium batteries. "
+        "Output dropped by a third this summer and the installer says it is only dust. Is that normal?")
+AD = "Brand X inverter new stock available, price 75000, contact now"
 
 
 @pytest.fixture
@@ -112,7 +113,7 @@ def test_import_merges_across_runs_and_is_idempotent(root):
         assert sana["post_url"] == "https://www.facebook.com/groups/123/posts/555/"
         assert sana["screenshot_path"] == "solar-panel/20261002-140000/screenshots/r3.png"
 
-        assert [i["author_name"] for i in ds.items(limit=None) if i["text"].startswith("Selling")].count("Someone Else") == 1
+        assert [i["author_name"] for i in ds.items(limit=None) if i["text"].startswith("Two years")].count("Someone Else") == 1
 
         stats = ds.stats()
         assert stats["items"] == 4 and stats["runs"] == 2 and stats["seen_in_more_than_one_run"] == 2
@@ -246,8 +247,7 @@ def _labelled_dataset(root):
     make_run(root, "brand-x", "20261001-100000", [
         rec("a", text="Brand X inverter stopped working after 2 weeks, worst service, bilkul bekar",
             post_url="https://www.facebook.com/reel/1/", kind="reel", keyword="Brand X"),
-        rec("b", text="Brand X inverter new stock available, price 75000, contact now",
-            post_url="https://www.facebook.com/reel/2/", kind="reel", keyword="Brand X"),
+        rec("b", text=AD, post_url="https://www.facebook.com/reel/2/", kind="reel", keyword="Brand X"),
         rec("c", text="Comparing Brand X and Brand Y inverters: Y failed twice, X has been perfect",
             post_url="https://www.facebook.com/reel/3/", kind="reel", keyword="Brand X"),
     ], keyword="Brand X")
@@ -265,14 +265,16 @@ def test_sentiment_labels(root):
     with Dataset(db) as ds:
         ds.import_all(root)
         complaint = next(i for i in ds.items(limit=None) if "worst" in i["text"])["item_id"]
-        ad = next(i for i in ds.items(limit=None) if "new stock" in i["text"])["item_id"]
+        ad = next(i for i in ds.items(limit=None, include_types="all") if "new stock" in i["text"])["item_id"]
         both = next(i for i in ds.items(limit=None) if "Comparing" in i["text"])["item_id"]
         listing = next(i for i in ds.items(limit=None) if i["kind"] == "marketplace")["item_id"]
 
         queue = ds.label_queue(limit=50)
-        assert queue["remaining"] == 5                              # the comparison needs a label per keyword
+        assert queue["remaining"] == 4                              # the comparison needs a label per keyword
         assert {(q["item_id"], q["keyword"]) for q in queue["to_label"]} >= {(both, "Brand X"), (both, "Brand Y")}
-        assert ds.label_queue(run_id="brand-x_20261001-100000")["remaining"] == 3
+        assert ad not in {q["item_id"] for q in queue["to_label"]}  # an ad: left out unless asked for
+        assert ds.label_queue(include_types="promotion")["remaining"] == 5
+        assert ds.label_queue(run_id="brand-x_20261001-100000")["remaining"] == 2
 
         result = ds.label_items([
             {"item_id": complaint, "sentiment": "negative", "reason": "'worst service', 'bilkul bekar'"},
@@ -295,7 +297,11 @@ def test_sentiment_labels(root):
         assert mixed["sentiment"] == "Brand X: positive | Brand Y: negative"
 
         stats = ds.stats(keyword="Brand X")
-        assert stats["by_sentiment"] == {"negative": 1, "neutral": 1, "positive": 1} and stats["not_labeled"] == 0
+        assert stats["by_sentiment"] == {"negative": 1, "positive": 1} and stats["not_labeled"] == 0
+        assert stats["items"] == 2 and stats["hidden_by_content_type"] == {"promotion": 1}
+        everything = ds.stats(keyword="Brand X", include_types="all")
+        assert everything["by_sentiment"] == {"negative": 1, "neutral": 1, "positive": 1}
+        assert everything["items"] == 3 and everything["hidden_by_content_type"] == {}
         assert ds.stats()["not_labeled"] == 1
         assert ds.count(kind="marketplace", contains="PKR75") == 1
 
@@ -309,7 +315,7 @@ def test_sentiment_labels(root):
     db.unlink()                                                     # rebuilt from the run folders
     with Dataset(db) as ds:
         ds.import_all(root)
-        assert ds.stats()["by_sentiment"] == {"negative": 2, "neutral": 1, "positive": 1}
+        assert ds.stats(include_types="all")["by_sentiment"] == {"negative": 2, "neutral": 1, "positive": 1}
         ds.exclude_items([complaint], "test")                       # removing an item drops its label
         assert ds.count(sentiment="negative", keyword="Brand X") == 0
 

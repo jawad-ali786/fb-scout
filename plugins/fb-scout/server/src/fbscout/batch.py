@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from .config import default_output_root, pace_factor
+from .content_filter import parse_types
 from .matching import MODES, clean_keyword
 from .scraper import Progress, SearchOptions
 from .storage import slugify, utc_now_iso
@@ -60,6 +61,7 @@ class Study:
     marketplace_location: str | None = None
     listing_details: bool = False
     include_name_matches: bool = False
+    include_types: list[str] = field(default_factory=list)   # keep promotions / job posts / ... too ("all")
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
@@ -108,6 +110,7 @@ class Study:
                              "has no groups.")
         if self.match_mode not in MODES:
             raise ValueError(f"match_mode must be one of {MODES}")
+        self.include_types = list(parse_types(self.include_types))
         pauses = list(self.pause_seconds) if isinstance(self.pause_seconds, (list, tuple)) else []
         if len(pauses) != 2 or not all(isinstance(p, (int, float)) and p >= 0 for p in pauses) or pauses[0] > pauses[1]:
             raise ValueError("pause_seconds must be [min, max] seconds, e.g. [60, 180].")
@@ -129,6 +132,7 @@ class Study:
                 output_dir=self.output_dir, headless=self.headless, max_minutes=self.max_minutes_per_search,
                 blur_names=self.blur_names, batch_id=batch_id, marketplace_location=self.marketplace_location,
                 listing_details=self.listing_details, include_name_matches=self.include_name_matches,
+                include_types=tuple(self.include_types),
             )
             for k in self.keywords for src, g in scopes
         ]
@@ -209,6 +213,7 @@ async def run_batch(study: Study, search: SearchFn, progress: Progress = None,
             "message": _error_message(result),
             "run_dir": result.get("run_dir"),
             "stats": result.get("stats"),
+            "filtered_out": result.get("filtered_out"),
             "dataset": result.get("dataset"),
         })
         report["searches_done"] = i + 1

@@ -16,7 +16,9 @@ Either:
 - **Inline**: `keywords` (list), `group_urls` (list of Facebook group URLs), `include_global` (false if
   the user says `no-global` or "only in the groups"), `include_marketplace` (also search Marketplace
   listings; `marketplace_location` for a city, `listing_details` to open listings), `max_results`
-  (`max=N`, default 20), `include_comments`, `include_name_matches` (only if asked), `blur_names`.
+  (`max=N`, default 20), `include_comments`, `include_name_matches` (only if asked), `blur_names`,
+  `include_types` (ads, job posts, giveaways and spam are left out; only if the user wants them:
+  `promotion`, `job`, `giveaway`, `spam` or `["all"]`).
 - Negative only ("negative", "complaints"): run the study normally, then label it (step 6).
 
 If there are no keywords, ask for them and stop.
@@ -46,7 +48,8 @@ Call `fb_batch` once without `dry_run`. It runs in a hidden browser, one search 
 ## 5. Report
 
 - A table with one row per search: keyword, global search or group, status, `stats.saved`, how many
-  were new in the dataset (`dataset.new_items`) and how many were already known (`dataset.merged`).
+  were new in the dataset (`dataset.new_items`) and how many were already known (`dataset.merged`),
+  and how many ads / job posts / giveaways / spam were left out (`filtered_out`).
 - Any errors, in plain words.
 - `dataset_totals`: distinct items in the dataset and per keyword.
 - `report_file`: the batch report (JSON).

@@ -1,7 +1,7 @@
 ---
 name: fb-search
-description: Search Facebook posts, group posts, comments or Marketplace listings for a keyword, brand or product. Keeps only results that really contain it, screenshots each match with the keyword highlighted, and saves results.json with metadata (post URL, kind, author, group, time, text, price for listings, screenshot name). Can return only negative posts or complaints, after every result is read and labeled negative, neutral or positive. Use when the user asks to search, collect, monitor or find Facebook posts, group posts, comments, complaints, negative reviews or Marketplace listings about something.
-argument-hint: "<keyword> [max=20] [group=<facebook group url> | marketplace [city=karachi] [details]] [match=phrase|all|any] [comments] [negative] [names] [blur]"
+description: Search Facebook posts, group posts, comments or Marketplace listings for a keyword, brand or product. Keeps only results that really contain it, leaves out ads, job posts, giveaways and spam unless asked, screenshots each match with the keyword highlighted, and saves results.json with metadata (post URL, kind, author, group, time, text, price for listings, screenshot name). Can return only negative posts or complaints, after every result is read and labeled negative, neutral or positive. Use when the user asks to search, collect, monitor or find Facebook posts, group posts, comments, complaints, negative reviews or Marketplace listings about something.
+argument-hint: "<keyword> [max=20] [group=<facebook group url> | marketplace [city=karachi] [details]] [match=phrase|all|any] [comments] [negative] [names] [include=promotion,job,giveaway,spam|all] [blur]"
 allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_status, mcp__plugin_fb-scout_fb-scout__fb_login, mcp__plugin_fb-scout_fb-scout__fb_search, mcp__plugin_fb-scout_fb-scout__fb_list_runs, mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_label_queue, mcp__plugin_fb-scout_fb-scout__fb_label_items, Read
 ---
 
@@ -25,6 +25,10 @@ From the request, extract:
   is only in a person's, page's or group's name (and profile / group-member cards). Default false.
 - `only_negative`: true if the user wants only negative posts: "negative", "complaints", "bad reviews",
   "problems with", "what people dislike". See step 4.
+- `include_types`: ads, job posts, giveaways and spam are left out by default. Pass a list only when the user
+  wants them: `promotion` ("include ads", "sale posts", "price lists", "the brand's own posts"), `job`
+  ("job posts too"), `giveaway`, `spam`, or `["all"]` ("everything", "don't filter"). Also `include=...`.
+  Not needed for Marketplace (listings are never filtered).
 - `blur_names`: true if the user says `blur`, or wants screenshots they can share or show.
 - `output_dir`: only if the user names a folder.
 
@@ -43,7 +47,9 @@ Tell the user which search you chose and why.
 Call `fb_search` once with the parameters; don't call `fb_status` first (the search checks the login
 itself, and every extra check opens a browser). It runs in a hidden (headless) browser, so no window
 appears. Tell the user it takes about 5 seconds per saved result (a 20-post search takes 1–2 minutes;
-comments add more). Pass `show_browser: true` only if the user asks to watch the run or you are debugging.
+comments add more). A bare brand name mostly finds ads, which are skipped, so such a search scrolls
+further and can take longer or save fewer posts than asked. Pass `show_browser: true` only if the user
+asks to watch the run or you are debugging.
 
 If the fb-scout tools aren't available at all, the plugin is still installing on this computer (the first
 start downloads Python and packages, 1–2 minutes) or `uv` is missing (a session note says so, with the
@@ -73,7 +79,8 @@ Rules:
 
 Skip this step unless `only_negative` was set. The result then has a `next_step`.
 
-1. Call `fb_label_queue` with the run's `run_id`. It returns up to 20 items with their full text.
+1. Call `fb_label_queue` with the run's `run_id` (and the same `include_types`, if the search had any;
+   the `next_step` shows the exact call). It returns up to 20 items with their full text.
 2. Read each text and decide its sentiment **towards the keyword** (brand/product/topic), following the
    rubric in the `fb_label_items` tool description:
    - **negative**: complaint, criticism, bad experience, defect or failure report, scam/fraud claim, refund or
@@ -95,6 +102,9 @@ Skip this step unless `only_negative` was set. The result then has a `next_step`
 - Where the files are: `run_dir`, which has `results.json` and `screenshots/`.
 - Counts: `stats.verified`, `stats.saved`, how many of each `kind`, `stats.comments_saved`
   (Marketplace: `stats.listings_opened`).
+- What was left out: `filtered_out` in one line, e.g. "Left out 14 ads and 1 job post; say 'include ads' to
+  keep them." (Examples with the reason are in `results.json` under `run.filtered_examples`.) Records the
+  user asked to keep have a `content_type`; mark them in the table.
 - A short table of the saved records: kind, author or group, posted date, language, snippet, screenshot name.
   Listings: title, price, location (and seller, condition when details were opened).
   Negative-only: date, group, author, the label's reason, snippet.
@@ -103,6 +113,10 @@ Skip this step unless `only_negative` was set. The result then has a `next_step`
 - The dataset: from `dataset`, how many records were new and how many were already known from earlier
   runs (`merged`). If `dataset.ok` is false, say the run itself is fine and suggest `fb_import_runs` later.
 - Any `warnings`, in plain words.
+- If little or nothing was saved because most results were left out (`filtered_out`), say so plainly: a
+  bare brand name mostly finds the brand's own posts and dealers' ads. Offer a search for what people say
+  (`<brand> problem` / `<brand> kharab` with `match=all`, or inside a buy/sell or users' group), or to
+  run it again with those posts included.
 - If nothing was verified, say how many candidates Facebook returned. Suggest `match=all`, another spelling, or searching inside a specific group. Mention the `debug/` folder in the run directory if it exists.
 
 Optionally `Read` one or two screenshots to confirm the keyword is visible. Never make up records, URLs or

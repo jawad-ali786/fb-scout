@@ -44,6 +44,7 @@ is idempotent: importing a run again adds nothing. The path can be changed with 
 | `posted_at_source` | `time_exact` (tooltip) or `time_text` (relative label) |
 | `language` | see §4 |
 | `price`, `location`, `condition` | Marketplace listings: price as shown (`PKR8,000`, `FREE`), place, condition (`Used – good`, with `listing_details`) |
+| `content_type`, `content_reason` | `promotion`, `job`, `giveaway` or `spam`, and why (empty for ordinary posts); these are hidden unless asked for, see [Content filter](#content-filter) |
 | `screenshot_path` | first screenshot, relative to the output folder |
 | `first_seen`, `last_seen`, `times_seen` | when runs found it, and in how many runs |
 
@@ -99,6 +100,42 @@ changed, so the raw evidence stays complete. To restore a record, delete its ent
 
 The 15 false positives from the first Phase 1 test (member cards and keyword-only-in-name
 matches, see PLAN.md §9) were removed this way.
+
+### Content filter
+
+Posts that aren't people talking about the keyword are tagged with a `content_type`, and the
+reason is saved in `content_reason`:
+
+| `content_type` | What |
+|---|---|
+| `promotion` | ads, items or services for sale, price lists, stock offers, the brand page's own posts and announcements |
+| `job` | hiring posts, vacancies, "technician required" |
+| `giveaway` | contests, lucky draws, "tag 3 friends" |
+| `spam` | earn-money, forex / crypto signals, loan offers, follow-for-follow |
+
+Searches leave them out (see [MVP.md](MVP.md#changes-in-v032)), and the dataset hides them from
+`stats`, `items`, the label queue and exports unless `include_types` names them (`all` shows
+everything). `stats` reports what it hides in `hidden_by_content_type`. Nothing is deleted: the
+items stay in the dataset and in the run folders.
+
+How it decides
+([`content_filter.py`](../plugins/fb-scout/server/src/fbscout/content_filter.py)): rules in
+English, Roman Urdu and Urdu give points, for example "for sale" 3, a phone or WhatsApp number 2,
+"6,050 each" 2, "in stock" 2, a specification sheet 2, advertising copy ("upgrade your",
+"engineered for") 1 per phrase up to 3, and a page whose name contains the keyword (the brand's
+own page) 3. Three points make a type. Someone describing their own experience or asking a
+question ("worst service", "kharab", "my inverter", "I bought", "is it normal", "anyone using")
+takes 4 points off, so a complaint that mentions a price or a phone number is kept. Listings
+(`kind: marketplace`) and profile cards are not checked.
+
+Every item is checked when it is imported, and the whole dataset is checked again when the rules
+change (the dataset stores the rules' version in `meta`), so older runs are covered too.
+
+On the 134 items collected for the first tests (mostly searches for brand names), it hid 114: 112
+promotions, 1 job post and 1 giveaway. It kept all 5 posts labelled negative, every question and
+experience, and the 5 Marketplace listings. Rules like these miss some ads in other languages
+(e.g. Burmese) and will sometimes hide a real post. Check `filtered_examples` in a run, or the
+hidden items with `include_types`, and extend the cue lists when something is in the wrong place.
 
 ---
 
@@ -165,8 +202,9 @@ can be read later (e.g. by the Phase 3 LLM step) when needed.
 | `parquet` | pandas/Arrow; needs `uv sync --extra parquet` in `plugins/fb-scout/server` |
 
 Filters: `keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`,
-`since`/`until` (posted date), `contains` (text, image text, price or location). Columns
-include `sentiment`, `sentiment_reason`, `price`, `location` and `condition`.
+`since`/`until` (posted date), `contains` (text, image text, price or location), `include_types`
+(also export promotions, job posts, giveaways or spam; `all` = everything). Columns include
+`sentiment`, `sentiment_reason`, `price`, `location`, `condition`, `content_type` and `content_reason`.
 
 **Anonymized export** (`--anonymize` / `anonymize: true`): `author_name` and `author_url`
 are replaced by `author_id`, a pseudonym that stays the same across exports
@@ -202,6 +240,7 @@ to `_batches/<batch_id>.json`. See [`examples/study.example.json`](../examples/s
 | `marketplace_location` | near the account | Marketplace city (`karachi`) or location id |
 | `listing_details` | `false` | open each kept listing (description, seller, condition, date) |
 | `include_name_matches` | `false` | keep keyword-only-in-a-name posts and profile cards |
+| `include_types` | `[]` | also keep `promotion`, `job`, `giveaway`, `spam` (or `"all"`), see [Content filter](#content-filter) |
 | `output_dir` | default output folder | |
 
 At most 50 searches per batch. For repeated collection, schedule the CLI with Task
