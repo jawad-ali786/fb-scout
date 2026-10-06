@@ -3,7 +3,7 @@
   "version": "0.3.4",
   "description": "Search Facebook posts, groups, comments and Marketplace for a keyword, screenshot every match (keyword highlighted), keep a deduplicated dataset, and optionally return only negative posts (labeled by Claude). Research tool.",
   "author": {
-    "name": "Farhan Irfan"
+    "name": "Jawad Ali"
   },
   "keywords": ["facebook", "research", "social-listening", "screenshots", "playwright", "mcp"]
 }
