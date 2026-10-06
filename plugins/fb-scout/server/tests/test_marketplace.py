@@ -74,6 +74,7 @@ def test_collect_listings(tmp_path):
     assert first["text"] == "Solar panel 585 watt Longi\nbullet damaged"
     assert first["matched_in"] == "title"
     assert second["price"] == "FREE" and second["text"] == "Used solar-panel set"   # "solar-panel" counts
+    assert all(r["content_type"] == "marketplace" for r in records)   # kept: the user asked for listings
     for rec in records:
         assert (run.dir / rec["screenshot_path"]).read_bytes()[:4] == PNG_MAGIC
 

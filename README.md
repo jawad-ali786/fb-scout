@@ -138,7 +138,10 @@ when the post mentions a price or a phone number. Each search reports how many w
 (`filtered_out`), and `results.json` lists the first ones with the reason, so the filter can be
 checked. To keep any of them, say so (*"include ads"*, *"job posts too"*) or pass
 `include_types` / `--include promotion,job` (`all` keeps everything). The dataset hides them the
-same way unless asked for. Marketplace listings are never filtered. The rules are in
+same way unless asked for. **Marketplace listings** are items for sale too: a Marketplace search keeps
+them (you asked for them), but the dataset hides them from counts, lists, labeling and exports unless
+you ask for them (`include_types: marketplace`, `--include marketplace`, or `kind=marketplace`). The
+rules are in
 [`content_filter.py`](plugins/fb-scout/server/src/fbscout/content_filter.py) and described in
 [docs/DATASET.md](docs/DATASET.md#content-filter).
 

@@ -19,9 +19,10 @@ Records can be excluded (false positives, irrelevant posts): they are listed wit
 a reason in exclusions.json next to the dataset, and every import skips them.
 The run folders are never changed, so they stay the untouched evidence.
 
-Every item is also checked by the content filter: promotions, job posts, giveaways
-and spam get a content_type (with the reason) and are hidden from counts, lists,
-label queues and exports unless include_types asks for them. Older runs are checked
+Every item is also checked by the content filter: promotions, job posts, giveaways,
+spam and Marketplace listings get a content_type (with the reason) and are hidden from
+counts, lists, label queues and exports unless include_types asks for them (or, for
+listings, kind 'marketplace'). Older runs are checked
 on import too, and everything is re-checked when the filter's rules change.
 """
 
@@ -97,7 +98,7 @@ KIND_RANK = ("group_post", "post", "reel", "video", "event", "marketplace", "com
 # Columns added after the first version: (name, type) for existing dataset files.
 ADDED_COLUMNS = (("price", "TEXT"), ("location", "TEXT"), ("condition", "TEXT"),
                  ("content_type", "TEXT"), ("content_reason", "TEXT"))
-NOT_CHECKED_KINDS = ("marketplace", "profile")   # listings are for sale by definition; cards have no post text
+NOT_CHECKED_KINDS = ("profile",)   # person/page cards have no post text
 
 # Filled in from a later sighting when an item doesn't have them yet.
 FILL_FIELDS = ("post_url", "comment_url", "parent_post_url", "author_name", "author_url",
@@ -220,9 +221,12 @@ def _split_list(value: str | list[str] | None) -> list[str]:
     return [v.strip() for v in items if v and v.strip()]
 
 
-def _content_clause(include_types, column: str = "content_type") -> tuple[str | None, list]:
-    """Ordinary posts, plus the content types asked for ('all' = everything)."""
+def _content_clause(include_types, column: str = "content_type", kinds: list[str] | None = None) -> tuple[str | None, list]:
+    """Ordinary posts, plus the content types asked for ('all' = everything). Asking for the kind
+    'marketplace' shows listings too."""
     shown = parse_types(include_types)
+    if kinds and "marketplace" in kinds and "marketplace" not in shown:
+        shown = (*shown, "marketplace")
     if set(shown) == set(CONTENT_TYPES):
         return None, []
     if not shown:
@@ -409,7 +413,7 @@ class Dataset:
         return upd
 
     def _classify_content(self, item_ids: set[str] | None = None) -> None:
-        """Tag promotions, job posts, giveaways and spam (content_filter). NULL = an ordinary post."""
+        """Tag promotions, job posts, giveaways, spam and listings (content_filter). NULL = an ordinary post."""
         keywords: dict[str, list[str]] = {}
         if item_ids is None:
             rows = self.conn.execute("SELECT item_id, kind, text, image_text, author_name FROM items").fetchall()
@@ -425,7 +429,8 @@ class Dataset:
         for r in rows:
             ctype = reason = None
             if r["kind"] not in NOT_CHECKED_KINDS:
-                ctype, reason = classify(r["text"], r["image_text"], r["author_name"], keywords.get(r["item_id"]))
+                ctype, reason = classify(r["text"], r["image_text"], r["author_name"], keywords.get(r["item_id"]),
+                                         r["kind"])
             self.conn.execute("UPDATE items SET content_type = ?, content_reason = ? WHERE item_id = ?",
                               (ctype, reason, r["item_id"]))
 
@@ -622,7 +627,7 @@ class Dataset:
                run_id: str | None = None, batch_id: str | None = None,
                include_types: str | list[str] | None = None) -> tuple[str, list]:
         clauses, params = [], []
-        content, content_params = _content_clause(include_types)
+        content, content_params = _content_clause(include_types, kinds=_split_list(kind))
         if content:
             clauses.append(content)
             params.extend(content_params)

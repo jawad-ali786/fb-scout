@@ -18,7 +18,8 @@ Either:
   listings; `marketplace_location` for a city, `listing_details` to open listings), `max_results`
   (`max=N`, default 20), `include_comments`, `include_name_matches` (only if asked), `blur_names`,
   `include_types` (ads, job posts, giveaways and spam are left out; only if the user wants them:
-  `promotion`, `job`, `giveaway`, `spam` or `["all"]`).
+  `promotion`, `job`, `giveaway`, `spam` or `["all"]`). Listings from `include_marketplace` are kept, and
+  the dataset hides them unless asked for (`include_types: ["marketplace"]` there).
 - Negative only ("negative", "complaints"): run the study normally, then label it (step 6).
 
 If there are no keywords, ask for them and stop.

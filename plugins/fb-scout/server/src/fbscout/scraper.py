@@ -17,7 +17,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from .browser import Session, check_page, is_logged_in, open_browser
 from .capture import capture_element
-from .content_filter import classify, parse_types
+from .content_filter import MARKETPLACE_REASON, classify, parse_types
 from .config import default_output_root, pace_factor
 from .dates import resolve
 from .errors import FBScoutError, NotLoggedIn
@@ -66,7 +66,8 @@ class SearchOptions:
     listing_details: bool = False            # open each kept listing for description, seller, condition, date
     include_name_matches: bool = False       # also keep keyword-only-in-a-name posts and profile/member cards
     only_negative: bool = False              # the user wants negative posts only: label, then report negatives
-    include_types: tuple[str, ...] = ()      # also keep these content types (promotion, job, giveaway, spam)
+    include_types: tuple[str, ...] = ()      # also keep these content types (promotion, job, giveaway, spam;
+                                             # Marketplace searches always keep their listings)
 
     def normalized(self) -> "SearchOptions":
         kw = clean_keyword(self.keyword)
@@ -181,7 +182,7 @@ def _record(*, rid: str, opts: SearchOptions, data: Extracted, match: MatchResul
         "price": None,          # Marketplace listings only
         "location": None,
         "condition": None,
-        "content_type": content_type,   # promotion / job / giveaway / spam, kept because include_types asked for it
+        "content_type": content_type,   # promotion / job / ... kept because include_types asked for it; marketplace
         "content_reason": content_reason,
         "screenshot_name": shot_name,
         "screenshot_path": f"screenshots/{shot_name}" if shot_name else None,
@@ -448,7 +449,8 @@ async def collect_listings(page: Page, opts: SearchOptions, run: RunWriter, dead
             record = _record(rid=rid, opts=opts, data=data, match=match, matched_in="title" if match.ok else None,
                              kind="marketplace", source=opts.scope, rank=rank, shot_name=shot,
                              post_url=listing.url, run=run)
-            record.update(price=listing.price, location=listing.location)
+            record.update(price=listing.price, location=listing.location, content_type="marketplace",
+                          content_reason=MARKETPLACE_REASON)
             run.add(record)
             saved.append(record)
             if progress:

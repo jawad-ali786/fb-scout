@@ -38,10 +38,11 @@ runs that found it. No browser is needed, so these tools are fast and safe to ca
   as `/fb-scout:fb-search` step 4). Then filter `fb_dataset_items` / `fb_export` with
   `sentiment: "negative"`. `fb_dataset_stats` shows `by_sentiment` and `not_labeled`. Labels are per item
   and keyword (a post can be negative about one brand and positive about another).
-- **Marketplace listings**: `kind: "marketplace"`; they have `price`, `location` and, when details were
+- **Marketplace listings**: hidden like ads unless asked for. Pass `kind: "marketplace"` (only listings) or
+  `include_types: ["marketplace"]` (listings plus posts). They have `price`, `location` and, when details were
   opened, `condition` and the seller as author.
-- **Ads, job posts, giveaways, spam**: every tool here leaves them out unless `include_types` names them
-  (`promotion`, `job`, `giveaway`, `spam`, or `["all"]`). `fb_dataset_stats` and `fb_dataset_items` report
+- **Ads, job posts, giveaways, spam, Marketplace listings**: every tool here leaves them out unless
+  `include_types` names them (`promotion`, `job`, `giveaway`, `spam`, `marketplace`, or `["all"]`). `fb_dataset_stats` and `fb_dataset_items` report
   how many are hidden (`hidden_by_content_type`); mention it in one line ("114 ads and 1 job post hidden").
   Pass `include_types` only when the user asks for those ("show the ads too", "export everything",
   "how many job posts"); then each item has `content_type` and `content_reason`. If the user says a post

@@ -11,7 +11,7 @@
       "name": "fb-scout",
       "source": "./plugins/fb-scout",
       "description": "Search Facebook for a keyword, screenshot matching posts/comments and save results.json with metadata.",
-      "version": "0.3.2"
+      "version": "0.3.3"
     }
   ]
 }

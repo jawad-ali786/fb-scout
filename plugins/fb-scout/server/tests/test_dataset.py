@@ -267,13 +267,15 @@ def test_sentiment_labels(root):
         complaint = next(i for i in ds.items(limit=None) if "worst" in i["text"])["item_id"]
         ad = next(i for i in ds.items(limit=None, include_types="all") if "new stock" in i["text"])["item_id"]
         both = next(i for i in ds.items(limit=None) if "Comparing" in i["text"])["item_id"]
-        listing = next(i for i in ds.items(limit=None) if i["kind"] == "marketplace")["item_id"]
+        listing = next(i for i in ds.items(limit=None, kind="marketplace"))["item_id"]   # asking for listings
+        assert listing not in {i["item_id"] for i in ds.items(limit=None)}                   # otherwise hidden
 
         queue = ds.label_queue(limit=50)
-        assert queue["remaining"] == 4                              # the comparison needs a label per keyword
+        assert queue["remaining"] == 3                              # the comparison needs a label per keyword
         assert {(q["item_id"], q["keyword"]) for q in queue["to_label"]} >= {(both, "Brand X"), (both, "Brand Y")}
         assert ad not in {q["item_id"] for q in queue["to_label"]}  # an ad: left out unless asked for
-        assert ds.label_queue(include_types="promotion")["remaining"] == 5
+        assert ds.label_queue(include_types="promotion")["remaining"] == 4
+        assert ds.label_queue(include_types="promotion,marketplace")["remaining"] == 5
         assert ds.label_queue(run_id="brand-x_20261001-100000")["remaining"] == 2
 
         result = ds.label_items([
@@ -286,7 +288,8 @@ def test_sentiment_labels(root):
             {"item_id": "i_nope", "sentiment": "negative"},
         ])
         assert result["labeled"] == 4 and len(result["errors"]) == 3
-        assert ds.label_queue()["remaining"] == 1                   # only the listing is left
+        assert ds.label_queue()["remaining"] == 0
+        assert ds.label_queue(include_types="marketplace")["remaining"] == 1   # only the listing is left
 
         negatives_x = ds.items(keyword="Brand X", sentiment="negative")
         assert [i["item_id"] for i in negatives_x] == [complaint]
@@ -302,8 +305,10 @@ def test_sentiment_labels(root):
         everything = ds.stats(keyword="Brand X", include_types="all")
         assert everything["by_sentiment"] == {"negative": 1, "neutral": 1, "positive": 1}
         assert everything["items"] == 3 and everything["hidden_by_content_type"] == {}
-        assert ds.stats()["not_labeled"] == 1
+        assert ds.stats()["not_labeled"] == 0 and ds.stats(include_types="all")["not_labeled"] == 1
+        assert ds.stats()["hidden_by_content_type"] == {"marketplace": 1, "promotion": 1}
         assert ds.count(kind="marketplace", contains="PKR75") == 1
+        assert ds.count(include_types="marketplace") == 3 and ds.count() == 2
 
         out = export_items(ds, root / "neg.csv", "csv", sentiment="negative", keyword="Brand X")
         rows = list(csv.DictReader((root / "neg.csv").open(encoding="utf-8-sig")))

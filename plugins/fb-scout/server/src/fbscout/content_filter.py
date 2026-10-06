@@ -1,6 +1,9 @@
-"""Content that isn't people talking about the keyword: promotions, job posts, giveaways, spam.
+"""Content that isn't people talking about the keyword: promotions, job posts, giveaways, spam,
+and Marketplace listings (always items for sale).
 
-Searches leave these out by default; each type can be switched back on (include_types). The
+Searches and the dataset leave these out by default; each type can be switched back on
+(include_types). Listings are kept by a Marketplace search (the user asked for them) and hidden
+in the dataset like the rest. The
 rules are simple and reproducible (English, Roman Urdu and Urdu cues, scored; THRESHOLD points
 make a type), and every decision comes with its reason so it can be checked. Someone describing
 their own experience or problem ("my inverter", "is it normal?", "worst service") outweighs
@@ -16,15 +19,17 @@ import re
 import unicodedata
 from typing import Iterable
 
-CONTENT_TYPES = ("promotion", "job", "giveaway", "spam")
+CONTENT_TYPES = ("promotion", "job", "giveaway", "spam", "marketplace")
 DESCRIPTIONS = {
     "promotion": "ads, items or services for sale, price lists, brand pages' own posts and announcements",
     "job": "job offers and hiring posts",
     "giveaway": "contests, lucky draws, 'tag 3 friends'",
     "spam": "earn-money, forex/crypto signals, loan offers, follow-for-follow",
+    "marketplace": "Marketplace listings (items for sale); a Marketplace search keeps them, the dataset hides them",
 }
+MARKETPLACE_REASON = "Marketplace listing (an item for sale)"
 THRESHOLD = 3
-LOGIC_VERSION = 1   # raise when classify() changes; rule edits are picked up by RULES_VERSION by themselves
+LOGIC_VERSION = 2   # raise when classify() changes; rule edits are picked up by RULES_VERSION by themselves
 
 # (pattern, points[, how many different matches count]), matched on lower-cased text; by default once.
 PROMOTION = [
@@ -119,10 +124,12 @@ def _letters(text: str | None) -> str:
 
 
 def classify(text: str | None, image_text: str | None = None, author_name: str | None = None,
-             keyword: str | Iterable[str] | None = None) -> tuple[str | None, str | None]:
+             keyword: str | Iterable[str] | None = None, kind: str | None = None) -> tuple[str | None, str | None]:
     """(content type, reason), or (None, None) for ordinary posts. `keyword`: the keyword(s) the post was
     found for; a page or account named after one (the brand's own page) is a selling cue."""
-    raw = unicodedata.normalize("NFKC", f"{text or ''}\n{image_text or ''}").lower()
+    if kind == "marketplace":
+        return "marketplace", MARKETPLACE_REASON
+    raw =unicodedata.normalize("NFKC", f"{text or ''}\n{image_text or ''}").lower()
     hay = _norm(raw)
     if not hay.strip():
         return None, None

@@ -43,6 +43,12 @@ def test_promotions_jobs_giveaways_spam(text, kind, cue):
     assert got == kind and cue in reason
 
 
+def test_marketplace_listings_are_their_own_type():
+    assert classify("Solar panel 585 watt, slightly used", kind="marketplace") == \
+        ("marketplace", "Marketplace listing (an item for sale)")
+    assert "marketplace" in parse_types("all") and parse_types("marketplace") == ("marketplace",)
+
+
 def test_text_in_the_image_counts():
     assert classify("Big weekend!", "May be an image of text that says 'SALE 20% OFF'")[0] == "promotion"
 
@@ -90,13 +96,15 @@ def test_dataset_hides_tagged_items_and_rechecks_when_rules_change(root):  # noq
     db = root / "fbscout.sqlite"
     with Dataset(db) as ds:
         ds.import_all(root)
-        assert ds.count() == 2                                       # listings are never filtered
-        assert ds.count(include_types="job") == ds.count(include_types="all") == 3
+        assert ds.count() == 1                                       # the complaint
+        assert ds.count(include_types="job") == ds.count(include_types="marketplace") == 2
+        assert ds.count(include_types="all") == 3
+        assert [i["content_type"] for i in ds.items(kind="marketplace")] == ["marketplace"]   # asked for listings
         job = ds.items(include_types="all", kind="reel")
         assert {i["content_type"] for i in job} == {None, "job"}
-        assert ds.stats()["hidden_by_content_type"] == {"job": 1}
+        assert ds.stats()["hidden_by_content_type"] == {"job": 1, "marketplace": 1}
         ds.conn.execute("UPDATE items SET content_type = NULL")      # as if checked by older rules
         ds.conn.execute("UPDATE meta SET value = 'old' WHERE key = 'content_rules'")
         ds.conn.commit()
     with Dataset(db) as ds:
-        assert ds.count() == 2 and ds.stats()["hidden_by_content_type"] == {"job": 1}
+        assert ds.count() == 1 and ds.stats()["hidden_by_content_type"] == {"job": 1, "marketplace": 1}

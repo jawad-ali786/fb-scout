@@ -56,10 +56,14 @@ Sentiment and analysis come later (see [PLAN.md](PLAN.md), Phase 3).
   nothing is screenshotted for them. They are counted in `stats.skipped_<type>` and in the
   summary's `filtered_out`, and the first 50 are listed in `run.filtered_examples` (type,
   reason, kind, author, URL, first 200 characters). `include_types` keeps any of them; kept
-  ones have `content_type` and `content_reason` in their record. Marketplace listings are
-  never filtered.
+  ones have `content_type` and `content_reason` in their record.
 - Because left-out posts don't count towards `max_results`, a search for a brand name (mostly
   ads) scrolls further and may save fewer posts than asked for within its time budget.
+
+### Changes in v0.3.3
+- Marketplace listings are content type `marketplace`. A Marketplace search still keeps them
+  (records have `content_type: "marketplace"`), but the dataset hides them like ads unless
+  `include_types` includes `marketplace` or the filter is `kind: marketplace`.
 
 ---
 

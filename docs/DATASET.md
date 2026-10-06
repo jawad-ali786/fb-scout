@@ -44,7 +44,7 @@ is idempotent: importing a run again adds nothing. The path can be changed with 
 | `posted_at_source` | `time_exact` (tooltip) or `time_text` (relative label) |
 | `language` | see §4 |
 | `price`, `location`, `condition` | Marketplace listings: price as shown (`PKR8,000`, `FREE`), place, condition (`Used – good`, with `listing_details`) |
-| `content_type`, `content_reason` | `promotion`, `job`, `giveaway` or `spam`, and why (empty for ordinary posts); these are hidden unless asked for, see [Content filter](#content-filter) |
+| `content_type`, `content_reason` | `promotion`, `job`, `giveaway`, `spam` or `marketplace`, and why (empty for ordinary posts); these are hidden unless asked for, see [Content filter](#content-filter) |
 | `screenshot_path` | first screenshot, relative to the output folder |
 | `first_seen`, `last_seen`, `times_seen` | when runs found it, and in how many runs |
 
@@ -111,11 +111,13 @@ reason is saved in `content_reason`:
 | `promotion` | ads, items or services for sale, price lists, stock offers, the brand page's own posts and announcements |
 | `job` | hiring posts, vacancies, "technician required" |
 | `giveaway` | contests, lucky draws, "tag 3 friends" |
+| `marketplace` | every Marketplace listing (an item for sale); a Marketplace search keeps them, the dataset hides them |
 | `spam` | earn-money, forex / crypto signals, loan offers, follow-for-follow |
 
-Searches leave them out (see [MVP.md](MVP.md#changes-in-v032)), and the dataset hides them from
-`stats`, `items`, the label queue and exports unless `include_types` names them (`all` shows
-everything). `stats` reports what it hides in `hidden_by_content_type`. Nothing is deleted: the
+Searches leave them out (see [MVP.md](MVP.md#changes-in-v032); a Marketplace search keeps its
+listings), and the dataset hides them from `stats`, `items`, the label queue and exports unless
+`include_types` names them (`all` shows everything). Filtering on `kind: marketplace` shows listings
+too. `stats` reports what it hides in `hidden_by_content_type`. Nothing is deleted: the
 items stay in the dataset and in the run folders.
 
 How it decides
@@ -123,17 +125,17 @@ How it decides
 English, Roman Urdu and Urdu give points, for example "for sale" 3, a phone or WhatsApp number 2,
 "6,050 each" 2, "in stock" 2, a specification sheet 2, advertising copy ("upgrade your",
 "engineered for") 1 per phrase up to 3, and a page whose name contains the keyword (the brand's
-own page) 3. Three points make a type. Someone describing their own experience or asking a
+own page) 3. Three points make a type. Listings are always `marketplace`. Someone describing their own experience or asking a
 question ("worst service", "kharab", "my inverter", "I bought", "is it normal", "anyone using")
-takes 4 points off, so a complaint that mentions a price or a phone number is kept. Listings
-(`kind: marketplace`) and profile cards are not checked.
+takes 4 points off, so a complaint that mentions a price or a phone number is kept. Profile
+cards are not checked.
 
 Every item is checked when it is imported, and the whole dataset is checked again when the rules
 change (the dataset stores the rules' version in `meta`), so older runs are covered too.
 
 On the 134 items collected for the first tests (mostly searches for brand names), it hid 114: 112
-promotions, 1 job post and 1 giveaway. It kept all 5 posts labelled negative, every question and
-experience, and the 5 Marketplace listings. Rules like these miss some ads in other languages
+promotions, 1 job post and 1 giveaway. It kept all 5 posts labelled negative and every question and
+experience. (The 5 Marketplace listings are hidden too since v0.3.3.) Rules like these miss some ads in other languages
 (e.g. Burmese) and will sometimes hide a real post. Check `filtered_examples` in a run, or the
 hidden items with `include_types`, and extend the cue lists when something is in the wrong place.
 
@@ -203,7 +205,7 @@ can be read later (e.g. by the Phase 3 LLM step) when needed.
 
 Filters: `keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`,
 `since`/`until` (posted date), `contains` (text, image text, price or location), `include_types`
-(also export promotions, job posts, giveaways or spam; `all` = everything). Columns include
+(also export promotions, job posts, giveaways, spam or Marketplace listings; `all` = everything). Columns include
 `sentiment`, `sentiment_reason`, `price`, `location`, `condition`, `content_type` and `content_reason`.
 
 **Anonymized export** (`--anonymize` / `anonymize: true`): `author_name` and `author_url`
@@ -240,7 +242,7 @@ to `_batches/<batch_id>.json`. See [`examples/study.example.json`](../examples/s
 | `marketplace_location` | near the account | Marketplace city (`karachi`) or location id |
 | `listing_details` | `false` | open each kept listing (description, seller, condition, date) |
 | `include_name_matches` | `false` | keep keyword-only-in-a-name posts and profile cards |
-| `include_types` | `[]` | also keep `promotion`, `job`, `giveaway`, `spam` (or `"all"`), see [Content filter](#content-filter) |
+| `include_types` | `[]` | also keep `promotion`, `job`, `giveaway`, `spam` (or `"all"`), see [Content filter](#content-filter); listings from `include_marketplace` are always kept |
 | `output_dir` | default output folder | |
 
 At most 50 searches per batch. For repeated collection, schedule the CLI with Task

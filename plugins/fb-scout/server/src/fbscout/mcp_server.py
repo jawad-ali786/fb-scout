@@ -22,7 +22,8 @@ mcp = MCPServer(
         "Facebook keyword research tools. Typical flow: fb_status → (fb_login if not logged in) → fb_search, "
         "or fb_batch for several keywords/groups/Marketplace. Every run is added to a SQLite dataset (deduplicated "
         "across runs): read it with fb_dataset_stats / fb_dataset_items, export it with fb_export. Promotions, "
-        "job posts, giveaways and spam are left out everywhere unless include_types asks for them. For negative "
+        "job posts, giveaways and spam are left out everywhere, and Marketplace listings are hidden in the dataset, "
+        "unless include_types asks for them. For negative "
         "posts only: label items with fb_label_queue + fb_label_items, then filter sentiment='negative'. "
         "Only one browser run at a time. If a tool returns error 'checkpoint' or 'blocked', stop and tell the "
         "user; never retry in a loop."
@@ -113,6 +114,7 @@ async def fb_search(
       `next_step`: label the run with fb_label_queue / fb_label_items, then report only the negatives.
     - include_types: content left out by default that should be kept too: 'promotion' (ads, items or
       services for sale, price lists, the brand page's own posts), 'job', 'giveaway', 'spam', or 'all'.
+      (A Marketplace search always keeps its listings.)
       Only when the user asks for those (e.g. "include ads", "job posts too").
     - output_dir: root folder for results (default: <project>/fb-scout-output).
     - save_unverified: also save results Facebook returned that do not contain the keyword.
@@ -176,7 +178,8 @@ async def fb_batch(
     Use dry_run=true first to show the plan and the estimated time. Long: several minutes per search.
     Limit: 50 searches per batch. To keep only negative posts, label the batch afterwards
     (fb_label_queue with batch_id) and filter with sentiment='negative'. Promotions, job posts, giveaways
-    and spam are left out unless include_types ('promotion', 'job', 'giveaway', 'spam' or 'all') keeps them."""
+    and spam are left out unless include_types ('promotion', 'job', 'giveaway', 'spam' or 'all') keeps them.
+    Marketplace listings (include_marketplace) are kept, but hidden in the dataset unless asked for."""
     try:
         if study_file:
             if keywords or group_urls:
@@ -211,8 +214,9 @@ def fb_dataset_stats(keyword: str | None = None, include_types: list[str] | None
                      output_dir: str | None = None) -> dict:
     """Overview of the dataset (all runs, duplicates merged): number of distinct posts/comments, how
     many were seen in more than one run, and counts by keyword, kind, language, sentiment label, month
-    posted and group. Promotions, job posts, giveaways and spam are not counted unless include_types
-    names them ('promotion', 'job', 'giveaway', 'spam' or 'all'); `hidden_by_content_type` says how many."""
+    posted and group. Promotions, job posts, giveaways, spam and Marketplace listings are not counted unless
+    include_types names them ('promotion', 'job', 'giveaway', 'spam', 'marketplace' or 'all');
+    `hidden_by_content_type` says how many."""
     return api.dataset_stats(output_dir, keyword, include_types)
 
 
@@ -241,7 +245,8 @@ def fb_dataset_items(
     Filters: keyword; kind, language and sentiment as comma-separated lists (e.g. 'post,group_post',
     'ur,ur-Latn', 'negative'); run_id (items of one run) or batch_id (of one study); group (name/URL contains); since/until as
     YYYY-MM-DD on the posted date; contains (text, image text, price or location); include_types: also
-    show promotions, job posts, giveaways or spam ('promotion', 'job', 'giveaway', 'spam' or 'all'; hidden
+    show promotions, job posts, giveaways, spam or Marketplace listings ('promotion', 'job', 'giveaway', 'spam',
+    'marketplace' or 'all'; kind 'marketplace' also shows listings; hidden
     by default, counted in `hidden_by_content_type`; each item has content_type and content_reason).
     Page through with limit (max 500) and offset."""
     return api.dataset_items(output_dir, limit, offset, full_text, keyword=keyword, kind=kind, language=language,
@@ -260,7 +265,7 @@ def fb_label_queue(
 ) -> dict:
     """Items that still need a sentiment label (for the keyword that found them), with their text, so you
     can read and judge them. Narrow it to one run (run_id from fb_search), a keyword or a study (batch_id).
-    Promotions, job posts, giveaways and spam are skipped unless include_types names them.
+    Promotions, job posts, giveaways, spam and Marketplace listings are skipped unless include_types names them.
     `remaining` says how many are left in total. Save your judgements with fb_label_items."""
     return api.label_queue(output_dir, keyword, run_id, batch_id, limit, include_types)
 
@@ -303,7 +308,7 @@ def fb_export(
     csv opens directly in Excel (UTF-8, Urdu works); parquet needs the optional pyarrow extra.
     anonymize=true replaces authors with stable pseudonyms (author_id) and drops all URLs; names inside
     the text and screenshots are not removed. Same filters as fb_dataset_items (e.g. sentiment='negative';
-    promotions, job posts, giveaways and spam only with include_types).
+    promotions, job posts, giveaways, spam and Marketplace listings only with include_types).
     Default file: <output>/_exports/fbscout_<keyword|all>_<timestamp>.<format>."""
     return api.dataset_export(output_dir, format, file, anonymize, keyword=keyword, kind=kind, language=language,
                               sentiment=sentiment, run_id=run_id, batch_id=batch_id, group=group, since=since,

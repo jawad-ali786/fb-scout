@@ -28,7 +28,8 @@ From the request, extract:
 - `include_types`: ads, job posts, giveaways and spam are left out by default. Pass a list only when the user
   wants them: `promotion` ("include ads", "sale posts", "price lists", "the brand's own posts"), `job`
   ("job posts too"), `giveaway`, `spam`, or `["all"]` ("everything", "don't filter"). Also `include=...`.
-  Not needed for Marketplace (listings are never filtered).
+  Not needed for a Marketplace search: it always keeps its listings. (The dataset hides listings like ads;
+  see `/fb-scout:fb-dataset`.)
 - `blur_names`: true if the user says `blur`, or wants screenshots they can share or show.
 - `output_dir`: only if the user names a folder.
 

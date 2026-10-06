@@ -25,7 +25,8 @@ from .batch import Study
 from .scraper import SearchOptions
 
 
-INCLUDE_HELP = ("also keep content left out by default: comma-separated promotion,job,giveaway,spam, or all")
+INCLUDE_HELP = ("also keep content left out by default: comma-separated promotion,job,giveaway,spam,marketplace, "
+                "or all")
 
 
 def _add_filters(p: argparse.ArgumentParser) -> None:
