@@ -52,10 +52,11 @@ comments add more). A bare brand name mostly finds ads, which are skipped, so su
 further and can take longer or save fewer posts than asked. Pass `show_browser: true` only if the user
 asks to watch the run or you are debugging.
 
-If the fb-scout tools aren't available at all, the plugin is still installing on this computer (the first
-start downloads Python and packages, 1–2 minutes) or `uv` is missing (a session note says so, with the
-install command). Tell the user exactly that, and that afterwards `/mcp` → reconnect fb-scout makes the
-tools available without restarting.
+If the fb-scout tools aren't available at all, FB Scout is still setting itself up in the background on
+this computer (the first start installs uv, Python and packages, 1–2 minutes). A note at the start of the
+session says so, and you'll be told when it's done. Tell the user exactly that; don't install anything
+yourself. When setup is done, `/mcp reconnect all` makes the tools available without restarting (the
+note says when a restart is needed instead).
 
 ## 3. Log in only when the search says so
 

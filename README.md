@@ -29,8 +29,8 @@ for the search itself and [docs/DATASET.md](docs/DATASET.md) for the dataset.
 plugins/fb-scout/
   .claude-plugin/plugin.json        ← plugin manifest
   .mcp.json                         ← starts the MCP server with uv
-  hooks/hooks.json                  ← setup check at session start (installs Python + packages once)
-  scripts/session-start.sh          ← the setup check
+  hooks/hooks.json                  ← at session start: a quick check, and the setup in the background
+  scripts/session-start.sh          ← installs uv, Python, packages (and a browser if needed) once
   skills/fb-search/SKILL.md         ← /fb-scout:fb-search, one keyword
   skills/fb-batch/SKILL.md          ← /fb-scout:fb-batch, a study: keywords × groups
   skills/fb-dataset/SKILL.md        ← /fb-scout:fb-dataset, stats, browsing, exports
@@ -44,6 +44,7 @@ plugins/fb-scout/
       capture.py   element screenshots + keyword highlight + name blurring
       storage.py   run folders + results.json
       dataset.py   SQLite dataset across runs, deduplication
+      content_filter.py  promotions / job posts / giveaways / spam / listings (left out unless asked)
       dates.py     "3d" / tooltip dates → posted_at
       lang.py      language detection (en / ur / ur-Latn / ...)
       batch.py     study files: keywords × groups, one search at a time
@@ -87,20 +88,25 @@ claude --plugin-dir "./plugins/fb-scout"
 
 ### First time on a new computer
 
-1. **Install `uv` once** (it installs Python and every package for you), and Google Chrome
-   (Microsoft Edge also works):
-   - Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
-   - macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. **Add the plugin** (the two `/plugin` commands above), then **start a new Claude Code session**.
-   The plugin's setup hook installs Python and the packages at session start (about
-   100 MB, 1–2 minutes, only once). If `uv` is missing, Claude tells you the command above.
+1. **Add the plugin** (the two `/plugin` commands above) and **start a new Claude Code session**.
+   Nothing else to install by hand: FB Scout sets itself up **in the background** while you chat.
+   It installs [`uv`](https://docs.astral.sh/uv/) if it's missing (with uv's official installer),
+   then Python and the packages (about 100 MB, 1–2 minutes, only once), and Playwright's Chromium
+   if neither Google Chrome nor Microsoft Edge is installed. A note says that setup is running.
+   Claude doesn't wait for it, and tells you when it's done.
+2. **When Claude says FB Scout is ready**, type `/mcp reconnect all` once, because Claude Code
+   doesn't retry a tool server that couldn't start. Only if `uv` was just installed and this
+   window can't see it yet does Claude ask you to restart Claude Code instead.
 3. **Search**: `/fb-scout:fb-search "solar panel" max=20`. The very first time, a Chrome window
    opens for the one-time Facebook login. Log in, close the window, and the search continues by
    itself in the same prompt.
 
-If `/mcp` still shows `fb-scout` as failed in that first session (slow connection), reconnect
-it there; no restart is needed. From then on, sessions start without any setup (the check
-takes about 0.1 s).
+From then on, sessions start without any setup (the check takes about 0.2 s), and plugin updates
+re-install in a few seconds from the cache. The setup log is in the plugin's data folder
+(`~/.claude/plugins/data/<plugin id>/setup.log`). To install `uv` yourself instead, set
+`FBSCOUT_NO_AUTO_INSTALL=1`; Claude then gives you the command:
+- Windows (PowerShell): `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
+- macOS / Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 **How long a search takes:** about 5 seconds per saved post, so 20 posts take 1–2 minutes;
 `comments` adds roughly half a minute per scanned post. About half of that time is deliberate

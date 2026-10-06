@@ -1,6 +1,6 @@
 [project]
 name = "fbscout"
-version = "0.3.3"
+version = "0.3.4"
 description = "Search Facebook for a keyword, screenshot matching posts/comments and save JSON metadata (research tool)."
 readme = "README.md"
 requires-python = ">=3.10"

@@ -6,8 +6,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\"",
-            "timeout": 600
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\" check",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.sh\" setup",
+            "asyncRewake": true,
+            "timeout": 1800
           }
         ]
       }
