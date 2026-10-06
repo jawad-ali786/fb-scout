@@ -7,6 +7,7 @@ same post found by several runs becomes a single item:
 ```
 fb-scout-output/
 ├── fbscout.sqlite          ← the dataset (all runs, duplicates merged)
+├── exclusions.json         ← records left out of the dataset, with reasons
 ├── _exports/               ← CSV / JSONL / Parquet exports
 ├── _batches/               ← one report per study (batch) run
 └── <keyword>/<timestamp>/  ← the runs, as before
@@ -76,6 +77,24 @@ Import also fixes what older runs stored differently: tracking parameters, the o
 `multi_permalinks` form, photo links of group posts (turned into the group post URL from
 `set=gm.<id>` / `set=pcb.<id>`), avatar labels stored as author names, and image
 descriptions stored as `time_text`.
+
+---
+
+### Removing items (exclusions)
+
+False positives or posts that are off-topic can be left out of the dataset:
+
+```
+fbscout db exclude i_1a2b3c4d5e6f i_6f5e4d3c2b1a --reason "not about the brand"
+```
+(MCP: `fb_exclude_items`). Each excluded record is written with its run, record id,
+keyword, reason and date to `exclusions.json` next to the dataset, and every later import
+skips it, also when the dataset is rebuilt from the run folders. The run folders are never
+changed, so the raw evidence stays complete. To restore a record, delete its entry from
+`exclusions.json` and run `fbscout db import`. `fbscout db stats` shows `excluded_records`.
+
+The 15 false positives from the first Phase 1 test (member cards and keyword-only-in-name
+matches, see PLAN.md §9) were removed this way.
 
 ---
 

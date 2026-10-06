@@ -154,6 +154,18 @@ def dataset_items(output_dir: str | None = None, limit: int = 50, offset: int = 
     return {"ok": True, "total": total, "returned": len(rows), "offset": offset, "items": rows}
 
 
+def dataset_exclude(item_ids: list[str], reason: str, output_dir: str | None = None) -> dict:
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    try:
+        with ds:
+            result = ds.exclude_items(item_ids, reason)
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
+    return {"ok": not result["not_found"], **result}
+
+
 def dataset_export(output_dir: str | None = None, fmt: str = "csv", out_file: str | None = None,
                    anonymize: bool = False, **filters) -> dict:
     ds, error = _open_dataset(output_dir)

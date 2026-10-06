@@ -128,6 +128,7 @@ Results:
 fb-scout-output/<keyword>/<timestamp>/results.json
                                      /screenshots/001_post_3f2a9c1b.png ...
 fb-scout-output/fbscout.sqlite        ← the dataset: all runs, duplicates merged
+fb-scout-output/exclusions.json       ← records left out of the dataset, with reasons
 fb-scout-output/_exports/             ← CSV / JSONL / Parquet exports
 fb-scout-output/_batches/             ← study (batch) reports
 ```
@@ -167,6 +168,7 @@ uv run fbscout batch study.json [--dry-run]
 uv run fbscout runs
 uv run fbscout db stats [--keyword K]
 uv run fbscout db export [--format csv|jsonl|parquet] [--anonymize] [--keyword K] [--language ur,ur-Latn] [--since 2026-09-01]
+uv run fbscout db exclude i_... --reason "off-topic"   # leave items out (run folders stay unchanged)
 uv run fbscout db import                  # runs made before v0.2, or copied from elsewhere
 ```
 
@@ -194,6 +196,7 @@ uv run fbscout db import                  # runs made before v0.2, or copied fro
 | `fb_dataset_stats` | Distinct items by keyword, kind, language, month posted, group |
 | `fb_dataset_items` | Items with filters (`keyword`, `kind`, `language`, `group`, `since`, `until`, `contains`), paged |
 | `fb_export` | CSV / JSONL / Parquet with the same filters; `anonymize` |
+| `fb_exclude_items` | Leave items out of the dataset with a reason (kept in `exclusions.json`) |
 | `fb_import_runs` | Import existing run folders into the dataset (safe to repeat) |
 
 ---

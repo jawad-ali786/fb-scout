@@ -221,6 +221,14 @@ def fb_export(
 
 
 @mcp.tool()
+def fb_exclude_items(item_ids: list[str], reason: str, output_dir: str | None = None) -> dict:
+    """Leave items (ids 'i_...' from fb_dataset_items) out of the dataset, e.g. false positives or posts
+    that are not about the topic. Recorded with the reason in exclusions.json next to the dataset, so
+    later imports keep them out; the run folders are not changed. Only do this when the user asked for it."""
+    return api.dataset_exclude(item_ids, reason, output_dir)
+
+
+@mcp.tool()
 def fb_import_runs(output_dir: str | None = None) -> dict:
     """(Re)import every run folder in the output folder into the dataset. Safe to repeat: runs already
     imported are not counted twice. Needed only for runs made before v0.2 or copied in from elsewhere."""

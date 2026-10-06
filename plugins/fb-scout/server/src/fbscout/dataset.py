@@ -14,6 +14,10 @@ and older runs stored group posts as ?multi_permalinks=. So an item is matched o
   content_key  group (or parent post) + a fingerprint of the text, when the
                authors don't contradict each other.
 Importing is idempotent: importing the same run again changes nothing.
+
+Records can be excluded (false positives, irrelevant posts): they are listed with
+a reason in exclusions.json next to the dataset, and every import skips them.
+The run folders are never changed, so they stay the untouched evidence.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from .storage import RESULTS_FILE, utc_now_iso
 from .urls import UI_LABELS, classify_kind, clean_url, group_post_from_photo, group_segment
 
 SCHEMA_VERSION = "1"
+EXCLUSIONS_FILE = "exclusions.json"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -181,6 +186,10 @@ def _relative_dir(run_dir: Path, output_root: Path | None) -> str:
     return str(run_dir.resolve())
 
 
+def _record_id(rec: dict) -> str:
+    return rec.get("id") or hashlib.sha1(json.dumps(rec, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def _split_list(value: str | list[str] | None) -> list[str]:
     if not value:
         return []
@@ -197,6 +206,8 @@ class Dataset:
         self.conn.executescript(SCHEMA)
         self.conn.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
         self.conn.commit()
+        self.exclusions_path = self.path.with_name(EXCLUSIONS_FILE)
+        self._exclusions = self._load_exclusions()
 
     def close(self) -> None:
         self.conn.close()
@@ -230,9 +241,13 @@ class Dataset:
              run.get("batch_id"), offset, len(results), json.dumps(run.get("stats") or {}),
              json.dumps(run.get("warnings") or [], ensure_ascii=False), utc_now_iso()))
 
-        counts = {"new_items": 0, "merged": 0, "already_imported": 0}
+        counts = {"new_items": 0, "merged": 0, "already_imported": 0, "excluded": 0}
         touched: set[str] = set()
         for rec in results:
+            if (run_id, _record_id(rec)) in self._exclusions:
+                counts["excluded"] += 1
+                touched |= self._drop_sighting(run_id, _record_id(rec))
+                continue
             item_id, outcome = self._add_record(rec, run_id, run.get("keyword"), rel_dir, offset)
             counts[outcome] += 1
             touched.add(item_id)
@@ -242,7 +257,8 @@ class Dataset:
 
     def import_all(self, output_root: Path | str) -> dict:
         root = Path(output_root)
-        runs, totals, errors = 0, {"records": 0, "new_items": 0, "merged": 0, "already_imported": 0}, []
+        runs, errors = 0, []
+        totals = {"records": 0, "new_items": 0, "merged": 0, "already_imported": 0, "excluded": 0}
         for path in sorted(root.glob(f"*/*/{RESULTS_FILE}")):
             try:
                 r = self.import_run(path.parent, root)
@@ -260,7 +276,7 @@ class Dataset:
         times = resolve(rec.get("time_exact"), rec.get("time_text"), rec.get("captured_at"), offset)
         shot = f"{rel_dir}/{rec['screenshot_path']}" if rec.get("screenshot_path") else None
         uk, ck = url_key(rec), content_key(rec)
-        record_id = rec.get("id") or hashlib.sha1(json.dumps(rec, sort_keys=True).encode()).hexdigest()[:12]
+        record_id = _record_id(rec)
 
         prior = self.conn.execute("SELECT item_id FROM sightings WHERE run_id = ? AND record_id = ?",
                                   (run_id, record_id)).fetchone()
@@ -345,6 +361,59 @@ class Dataset:
             upd["screenshot_path"] = shot
         return upd
 
+    # ---- exclusions -----------------------------------------------------------
+
+    def _load_exclusions(self) -> dict[tuple[str, str], dict]:
+        try:
+            entries = json.loads(self.exclusions_path.read_text(encoding="utf-8")).get("exclusions", [])
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, AttributeError) as exc:
+            raise ValueError(f"Can't read {self.exclusions_path}: {exc}") from exc
+        return {(e["run_id"], e["record_id"]): e for e in entries if e.get("run_id") and e.get("record_id")}
+
+    def _save_exclusions(self) -> None:
+        data = {"about": "Records left out of the dataset. Delete an entry and run `fbscout db import` to restore it.",
+                "exclusions": list(self._exclusions.values())}
+        self.exclusions_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _drop_sighting(self, run_id: str, record_id: str) -> set[str]:
+        """Remove one sighting; an item left without sightings is removed too. Returns the remaining item ids."""
+        rows = self.conn.execute("SELECT item_id FROM sightings WHERE run_id = ? AND record_id = ?",
+                                 (run_id, record_id)).fetchall()
+        kept = set()
+        for (item_id,) in rows:
+            self.conn.execute("DELETE FROM sightings WHERE item_id = ? AND run_id = ? AND record_id = ?",
+                              (item_id, run_id, record_id))
+            if self.conn.execute("SELECT 1 FROM sightings WHERE item_id = ?", (item_id,)).fetchone():
+                kept.add(item_id)
+            else:
+                self.conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
+        return kept
+
+    def exclude_items(self, item_ids: list[str], reason: str) -> dict:
+        """Leave items out of the dataset, now and in every later import. The run folders stay as they are."""
+        if not reason or not reason.strip():
+            raise ValueError("Give a reason for the exclusion (it is kept for the record).")
+        excluded, missing, records = [], [], 0
+        for item_id in dict.fromkeys(item_ids):
+            rows = self.conn.execute("SELECT run_id, record_id, keyword FROM sightings WHERE item_id = ?",
+                                     (item_id,)).fetchall()
+            if not rows:
+                missing.append(item_id)
+                continue
+            for r in rows:
+                self._exclusions[(r["run_id"], r["record_id"])] = {
+                    "run_id": r["run_id"], "record_id": r["record_id"], "item_id": item_id,
+                    "keyword": r["keyword"], "reason": reason.strip(), "excluded_at": utc_now_iso()}
+                self._drop_sighting(r["run_id"], r["record_id"])
+                records += 1
+            excluded.append(item_id)
+        self._save_exclusions()
+        self.conn.commit()
+        return {"excluded_items": len(excluded), "excluded_records": records, "not_found": missing,
+                "exclusions_file": str(self.exclusions_path.resolve()), "items_left": self.count()}
+
     def _refresh_seen(self, item_ids: set[str]) -> None:
         for item_id in item_ids:
             self.conn.execute(
@@ -409,6 +478,7 @@ class Dataset:
             "dataset": str(self.path.resolve()),
             "runs": runs,
             "items": total,
+            "excluded_records": len(self._exclusions),
             "seen_in_more_than_one_run": seen[2] or 0,
             "items_without_date": seen[3] or 0,
             "first_seen": seen[0],

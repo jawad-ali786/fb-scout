@@ -57,7 +57,7 @@ signals, product complaints).
 │  MCP server  (fbscout-mcp)                                       │
 │  tools: fb_status · fb_login · fb_search · fb_batch ·            │
 │         fb_list_runs · fb_dataset_stats · fb_dataset_items ·     │
-│         fb_export · fb_import_runs                               │
+│         fb_export · fb_exclude_items · fb_import_runs            │
 └───────────────┬──────────────────────────────────────────────────┘
                 │ Python API (also used by the `fbscout` CLI)
 ┌───────────────▼──────────────────────────────────────────────────┐

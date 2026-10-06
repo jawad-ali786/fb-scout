@@ -6,6 +6,7 @@
     fbscout batch study.json [--dry-run]
     fbscout runs [--keyword K]
     fbscout db import | stats [--keyword K] | export [--format csv|jsonl|parquet] [--anonymize] [filters]
+    fbscout db exclude ITEM_ID... --reason TEXT
 """
 
 from __future__ import annotations
@@ -75,6 +76,10 @@ def _parser() -> argparse.ArgumentParser:
     st = dbsub.add_parser("stats", help="counts by keyword, kind, language, month and group")
     st.add_argument("--out", dest="output_dir")
     st.add_argument("--keyword")
+    exc = dbsub.add_parser("exclude", help="leave items out of the dataset (kept in exclusions.json; run folders unchanged)")
+    exc.add_argument("item_ids", nargs="+", metavar="ITEM_ID", help="item ids (i_...) from stats/export")
+    exc.add_argument("--reason", required=True, help="why, e.g. 'not about the brand'")
+    exc.add_argument("--out", dest="output_dir")
     ex = dbsub.add_parser("export", help="export items as CSV (Excel), JSONL or Parquet")
     ex.add_argument("--out", dest="output_dir")
     ex.add_argument("--format", dest="fmt", choices=["csv", "jsonl", "parquet"], default="csv")
@@ -143,6 +148,8 @@ def main(argv: list[str] | None = None) -> int:
             result = api.dataset_import(args.output_dir)
         elif args.db_cmd == "stats":
             result = api.dataset_stats(args.output_dir, args.keyword)
+        elif args.db_cmd == "exclude":
+            result = api.dataset_exclude(args.item_ids, args.reason, args.output_dir)
         else:
             result = api.dataset_export(args.output_dir, args.fmt, args.out_file, args.anonymize, **_filters(args))
     else:

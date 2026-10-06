@@ -1,8 +1,8 @@
 ---
 name: fb-dataset
-description: Look at, filter and export everything FB Scout has collected. All runs are merged into one dataset with duplicates removed. Gives counts by keyword, kind, language, month posted and group, lists posts and comments with their text, dates and screenshots, and exports CSV (Excel), JSONL or Parquet, optionally anonymized. Use when the user asks what has been collected, wants numbers or trends, wants to see or read collected posts, or wants an export, CSV or Excel file.
+description: Look at, filter and export everything FB Scout has collected. All runs are merged into one dataset with duplicates removed. Gives counts by keyword, kind, language, month posted and group, lists posts and comments with their text, dates and screenshots, exports CSV (Excel), JSONL or Parquet, optionally anonymized, and leaves out items the user marks as false positives or off-topic. Use when the user asks what has been collected, wants numbers or trends, wants to see or read collected posts, or wants an export, CSV or Excel file, or wants posts removed from the dataset.
 argument-hint: "[stats | list | export] [keyword=...] [kind=...] [language=en,ur,ur-Latn] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [format=csv|jsonl|parquet] [anonymize]"
-allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_export, mcp__plugin_fb-scout_fb-scout__fb_import_runs, Read
+allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_export, mcp__plugin_fb-scout_fb-scout__fb_exclude_items, mcp__plugin_fb-scout_fb-scout__fb_import_runs, Read
 ---
 
 # FB Scout dataset
@@ -31,6 +31,11 @@ runs that found it. No browser is needed, so these tools are fast and safe to ca
   - `anonymize: true` when the export will be shared, published, or sent to someone outside the
     project. Authors become stable pseudonyms (`author_id`) and all URLs are removed. Always pass on
     the warning: names inside the post text and in screenshots are not removed.
+
+- **Remove items** ("this one is not about the brand", "drop the false positives"): show the user the
+  items first (`fb_dataset_items`) and remove only the ones they confirm, with `fb_exclude_items`
+  (`item_ids`, a short `reason`). They stay out of later imports; the run folders are not changed.
+  To undo, the entry is deleted from `exclusions.json` and `fb_import_runs` is run.
 
 ## Language codes
 

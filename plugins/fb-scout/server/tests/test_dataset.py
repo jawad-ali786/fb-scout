@@ -88,7 +88,8 @@ def test_import_merges_across_runs_and_is_idempotent(root):
 
     with Dataset(root / "fbscout.sqlite") as ds:
         first = ds.import_all(root)
-        assert first == {"runs": 2, "records": 6, "new_items": 4, "merged": 2, "already_imported": 0, "errors": []}
+        assert first == {"runs": 2, "records": 6, "new_items": 4, "merged": 2, "already_imported": 0, "excluded": 0,
+                         "errors": []}
         again = ds.import_all(root)
         assert again["new_items"] == 0 and again["merged"] == 0 and again["already_imported"] == 6
         assert ds.count() == 4
@@ -191,3 +192,51 @@ def test_api_creates_dataset_from_existing_runs(root):
     exported = api.dataset_export(str(root), "csv")
     assert exported["ok"] and "_exports" in exported["file"]
     assert api.dataset_export(str(root), "parquet").get("error") in (None, "invalid_argument")
+
+
+def test_exclusions_survive_reimport_and_rebuild(root):
+    make_run(root, "solar-panel", "20261001-100000", [
+        rec("a", text=LONG, post_url="https://www.facebook.com/reel/5/", kind="reel"),
+        rec("b", text="Sunbright Traders @solarpanel.pk Lives in Pakistan", kind="group_post"),
+    ])
+    make_run(root, "solar-panel", "20261002-100000", [
+        rec("c", text="Sunbright Traders @solarpanel.pk Lives in Pakistan", kind="group_post"),
+    ])
+    db = root / "fbscout.sqlite"
+    with Dataset(db) as ds:
+        ds.import_all(root)
+        card = next(i for i in ds.items(limit=None) if i["text"].startswith("Sunbright"))
+        assert card["times_seen"] == 2
+        with pytest.raises(ValueError, match="reason"):
+            ds.exclude_items([card["item_id"]], " ")
+        result = ds.exclude_items([card["item_id"], "i_doesnotexist"], "member card, not a post")
+        assert result["excluded_items"] == 1 and result["excluded_records"] == 2
+        assert result["not_found"] == ["i_doesnotexist"] and result["items_left"] == 1
+
+        again = ds.import_all(root)                                  # stays out on re-import
+        assert again["excluded"] == 2 and again["new_items"] == 0 and ds.count() == 1
+        assert ds.stats()["excluded_records"] == 2
+
+    saved = json.loads((root / "exclusions.json").read_text(encoding="utf-8"))["exclusions"]
+    assert {(e["run_id"], e["record_id"]) for e in saved} == {("solar-panel_20261001-100000", "b"),
+                                                               ("solar-panel_20261002-100000", "c")}
+    assert all(e["reason"] == "member card, not a post" for e in saved)
+    assert (root / "solar-panel" / "20261001-100000" / "results.json").read_text(encoding="utf-8").count('"b"') == 1
+
+    db.unlink()                                                      # rebuilt from the run folders: still out
+    with Dataset(db) as ds:
+        assert ds.import_all(root)["excluded"] == 2 and ds.count() == 1
+
+    (root / "exclusions.json").write_text('{"exclusions": []}', encoding="utf-8")   # restore by deleting the entry
+    with Dataset(db) as ds:
+        ds.import_all(root)
+        assert ds.count() == 2
+
+
+def test_api_exclude(root):
+    make_run(root, "solar-panel", "20261001-100000", [rec("a", text=LONG, post_url="https://www.facebook.com/reel/5/",
+                                                          kind="reel")])
+    item_id = api.dataset_items(str(root))["items"][0]["item_id"]
+    assert api.dataset_exclude([item_id], "", str(root))["error"] == "invalid_argument"
+    out = api.dataset_exclude([item_id], "not about the brand", str(root))
+    assert out["ok"] and out["items_left"] == 0
