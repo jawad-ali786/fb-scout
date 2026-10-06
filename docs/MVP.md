@@ -44,6 +44,12 @@ Sentiment and analysis come later (see [PLAN.md](PLAN.md), Phase 3).
 - `blur_names`: names and profile pictures blurred in screenshots.
 - After the run, the run is added to the dataset; the summary has a `dataset` entry.
 
+### Changes in v0.3
+- `source: "marketplace"` searches Marketplace listings (keyword checked in the listing title).
+- `include_name_matches` (default off) keeps posts whose keyword is only in a name, and profile cards.
+- `only_negative` returns a `next_step` for labeling the run; see [SENTIMENT.md](SENTIMENT.md).
+- Records have `price`, `location` and `condition` (listings only; empty for posts).
+
 ---
 
 ## 2. User flow

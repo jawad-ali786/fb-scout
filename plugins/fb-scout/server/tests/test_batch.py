@@ -102,3 +102,18 @@ def test_run_batch_stops_on_account_problems(tmp_path, error):
     assert not result["ok"] and result["status"] == "stopped"
     assert len(calls) == 2 and result["searches_done"] == 2
     assert "skipped" in result["stopped_reason"]
+
+
+def test_study_with_marketplace():
+    study = Study.from_dict({"keywords": ["solar panel"], "groups": ["https://www.facebook.com/groups/1/"],
+                             "include_marketplace": True, "marketplace_location": "karachi",
+                             "include_comments": True, "include_name_matches": True})
+    plan = study.plan()
+    assert [(o.source, o.group_url) for o in plan] == [("posts", None), ("posts", "https://www.facebook.com/groups/1/"),
+                                                       ("marketplace", None)]
+    market = plan[-1]
+    assert market.marketplace_location == "karachi" and not market.include_comments   # no comments on listings
+    assert all(o.include_name_matches for o in plan)
+    assert study.describe()["plan"][-1]["scope"] == "Marketplace (karachi)"
+    only_market = Study.from_dict({"keywords": ["x"], "include_global": False, "include_marketplace": True})
+    assert [o.scope for o in only_market.plan()] == ["search:marketplace"]

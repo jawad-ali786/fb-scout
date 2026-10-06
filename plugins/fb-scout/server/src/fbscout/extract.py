@@ -282,6 +282,7 @@ class Extracted:
     time_link_index: int | None = None   # index of the timestamp among el's <a> elements
     image_text: str | None = None
     is_post: bool = True
+    name_text: str | None = None          # linked names of people/pages/groups (for include_name_matches)
     aria_label: str = ""
     links: list[dict] = field(default_factory=list)
 
@@ -425,6 +426,12 @@ async def hover_time_exact(page: Page, el: ElementHandle, index: int | None) -> 
         return None
 
 
+def _names(links: list[dict]) -> list[str]:
+    """Names of the people, pages and groups linked in the post (author, group, mentions)."""
+    return list(dict.fromkeys(l["text"] for l in links
+                              if l.get("text") and link_role(l.get("href")) in ("profile", "group")))
+
+
 def _body_text(full_text: str, links: list[dict], nested: list[str]) -> str:
     """Everything in the post's container except names and comment previews.
 
@@ -435,8 +442,7 @@ def _body_text(full_text: str, links: list[dict], nested: list[str]) -> str:
     body = full_text
     for chunk in nested:
         body = body.replace(chunk, "\n")
-    names = {l["text"] for l in links if l.get("text") and link_role(l.get("href")) in ("profile", "group")}
-    for name in sorted(names, key=len, reverse=True):
+    for name in sorted(_names(links), key=len, reverse=True):
         body = body.replace(name, "\n")
     return body
 
@@ -491,6 +497,7 @@ async def extract_post(page: Page, el: ElementHandle, see_more: bool = True) -> 
         time_exact=time_exact,
         time_link_index=ts_index,
         image_text=image_text(raw["images"]),
+        name_text="\n".join(_names(links)) or None,
         aria_label=raw["aria_label"],
         links=links,
     )
@@ -525,3 +532,102 @@ async def extract_comment(page: Page, el: ElementHandle) -> Extracted:
         aria_label=label,
         links=links,
     )
+
+
+# ---- Marketplace -----------------------------------------------------------
+# Search results are a grid of links to /marketplace/item/<id>/ whose text is
+# "PRICE\nTITLE\nLOCATION"; the image's alt text is "TITLE in LOCATION".
+
+FIND_LISTINGS_JS = """() => Array.from(document.querySelectorAll('[role="main"] a[href*="/marketplace/item/"]'))
+  .filter(a => {
+    if (a.hasAttribute('data-fbscout-seen')) return false;
+    const r = a.getBoundingClientRect();
+    return r.width >= 100 && r.height >= 100;
+  })"""
+
+LISTINGS_READY_JS = """() => !!document.querySelector('[role="main"] a[href*="/marketplace/item/"]')
+  || /no listings found|we couldn't find|we couldn’t find/i.test(document.body ? document.body.innerText : '')"""
+
+LISTING_CARD_JS = """(a) => {
+  const img = a.querySelector('img');
+  return { href: a.href, text: (a.innerText || '').trim(), aria: a.getAttribute('aria-label') || '',
+           alt: img ? (img.getAttribute('alt') || '').trim() : '' };
+}"""
+
+# The listing page: its own column (or dialog), without "Related searches" / "Today's picks".
+LISTING_PAGE_JS = """() => {
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"]')).filter(d => d.getBoundingClientRect().height > 0);
+  const root = dialogs.length ? dialogs[dialogs.length - 1] : (document.querySelector('[role="main"]') || document.body);
+  const title = Array.from(root.querySelectorAll('h1')).map(h => (h.innerText || '').trim()).find(Boolean) || null;
+  const sellers = Array.from(root.querySelectorAll('a[href*="/marketplace/profile/"]'))
+    .map(a => ({ href: a.href, text: (a.innerText || '').trim() }));
+  return { title, text: root.innerText || '', sellers };
+}"""
+
+LISTING_STOP_LINES = ("related searches", "today's picks", "today’s picks", "send seller a message", "similar items")
+_PRICE_RE = re.compile(r"^(free|.{0,4}?\s?[\d][\d.,]*\s?[kKmM]?)\b", re.IGNORECASE)
+# A second, struck-out price on discounted listings ("PKR8,100" then "PKR10,000").
+_OLD_PRICE_RE = re.compile(r"^[^\w\s]{0,3}\s?(?:[A-Za-z]{1,4}\s?)?\d[\d.,]*$")
+# Buttons and labels inside a listing's description.
+LISTING_UI_LINES = {"see translation", "see original", "see more", "see less", "translated", "message", "send"}
+
+
+@dataclass
+class Listing:
+    url: str | None
+    title: str
+    price: str | None = None
+    location: str | None = None
+    description: str | None = None
+    condition: str | None = None
+    seller_name: str | None = None
+    seller_url: str | None = None
+    listed_text: str | None = None     # "2 days ago" from "Listed 2 days ago in Karachi"
+
+
+def parse_listing_card(card: dict) -> Listing:
+    lines = [l.strip() for l in (card.get("text") or "").split("\n") if l.strip()]
+    price = lines[0] if lines and _PRICE_RE.match(lines[0]) else None
+    rest = lines[1:] if price else lines
+    while price and len(rest) > 2 and _OLD_PRICE_RE.match(rest[0]):
+        rest = rest[1:]
+    location = rest[-1] if len(rest) >= 2 else None
+    title = " ".join(rest[:-1] if location else rest)
+    alt = card.get("alt") or ""
+    if location and alt.endswith(f" in {location}"):       # the alt keeps the title's own line breaks
+        title = alt[: -len(f" in {location}")].strip() or title
+    return Listing(url=clean_url(card.get("href")), title=title, price=price, location=location)
+
+
+def parse_listing_page(page_data: dict) -> dict:
+    """Details from a listing page: description, condition, seller, "Listed ... in ..."."""
+    lines = [l.strip() for l in (page_data.get("text") or "").split("\n") if l.strip()]
+    stop = next((i for i, l in enumerate(lines) if l.lower() in LISTING_STOP_LINES), len(lines))
+    lines = lines[:stop]
+    out: dict = {"title": page_data.get("title")}
+    at = next((i for i, l in enumerate(lines) if l.lower().startswith("listed ")), None)
+    if at is not None:
+        # "Listed 2 days ago in Karachi, Pakistan", or "Listed 2 weeks ago in" with the place on the next line
+        m = re.match(r"listed\s+(.*?)(?:\s+in(?:\s+(.+))?)?$", lines[at], re.IGNORECASE)
+        if m:
+            out["listed_text"] = m.group(1)
+            place = m.group(2)
+            if not place and lines[at].lower().endswith(" in") and at + 1 < len(lines):
+                place = lines[at + 1]
+            out["location"] = place
+    lower = [l.lower() for l in lines]
+    start = lower.index("details") + 1 if "details" in lower else None
+    if start is not None:
+        if start < len(lines) and lower[start] == "condition":
+            out["condition"] = lines[start + 1] if start + 1 < len(lines) else None
+            start += 2
+        end = next((i for i in range(start, len(lines))
+                    if lower[i] == "seller information" or "location is approximate" in lower[i]), len(lines))
+        description = clean_text("\n".join(l for l in lines[start:end] if l.lower() not in LISTING_UI_LINES))
+        out["description"] = description or None
+    seller = next((s for s in page_data.get("sellers") or []
+                   if s.get("text") and s["text"].lower() not in ("seller details", "see details")), None)
+    if seller:
+        out["seller_name"] = seller["text"].split("\n")[0][:200]
+        out["seller_url"] = clean_url(seller["href"].split("?")[0])
+    return out

@@ -84,6 +84,12 @@ async def _search_and_import(opts: SearchOptions, progress: Progress = None) -> 
         return {"ok": False, "error": "invalid_argument", "message": str(exc)}
     if result.get("run_dir"):
         result["dataset"] = import_run(result["run_dir"], opts.output_dir)
+        if opts.only_negative and result.get("run_id"):
+            result["next_step"] = (
+                "The user wants only negative posts. Label every item of this run: call fb_label_queue with "
+                f"run_id='{result['run_id']}', read each text, and save labels (negative / neutral / positive with a "
+                "short reason) with fb_label_items; repeat until nothing remains. Then report only "
+                f"fb_dataset_items(run_id='{result['run_id']}', sentiment='negative').")
     return result
 
 
@@ -164,6 +170,28 @@ def dataset_exclude(item_ids: list[str], reason: str, output_dir: str | None = N
     except ValueError as exc:
         return {"ok": False, "error": "invalid_argument", "message": str(exc)}
     return {"ok": not result["not_found"], **result}
+
+
+def label_queue(output_dir: str | None = None, keyword: str | None = None, run_id: str | None = None,
+                batch_id: str | None = None, limit: int = 20) -> dict:
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    root = _root(output_dir).resolve()
+    with ds:
+        result = ds.label_queue(keyword=keyword, run_id=run_id, batch_id=batch_id, limit=max(1, min(50, int(limit))))
+    for item in result["to_label"]:
+        item["screenshot_file"] = str(root / item["screenshot_path"]) if item.get("screenshot_path") else None
+    return {"ok": True, **result}
+
+
+def label_items(labels: list[dict], output_dir: str | None = None, labeler: str = "agent") -> dict:
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    with ds:
+        result = ds.label_items(labels, labeler)
+    return {"ok": not result["errors"], **result}
 
 
 def dataset_export(output_dir: str | None = None, fmt: str = "csv", out_file: str | None = None,

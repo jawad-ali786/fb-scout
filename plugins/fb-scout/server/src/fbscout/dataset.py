@@ -37,8 +37,10 @@ from .matching import normalize
 from .storage import RESULTS_FILE, utc_now_iso
 from .urls import UI_LABELS, classify_kind, clean_url, group_post_from_photo, group_segment
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 EXCLUSIONS_FILE = "exclusions.json"
+LABELS_FILE = "labels.json"
+SENTIMENTS = ("negative", "neutral", "positive")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -56,6 +58,7 @@ CREATE TABLE IF NOT EXISTS items (
   post_url TEXT, comment_url TEXT, parent_post_url TEXT,
   author_name TEXT, author_url TEXT, group_name TEXT, group_url TEXT,
   text TEXT, image_text TEXT, time_text TEXT, time_exact TEXT,
+  price TEXT, location TEXT, condition TEXT,
   posted_at TEXT, posted_date TEXT, posted_at_precision TEXT, posted_at_source TEXT,
   language TEXT,
   screenshot_path TEXT,
@@ -74,14 +77,23 @@ CREATE TABLE IF NOT EXISTS sightings (
   PRIMARY KEY (item_id, run_id, record_id)
 );
 CREATE INDEX IF NOT EXISTS sightings_keyword ON sightings(keyword);
+CREATE TABLE IF NOT EXISTS labels (
+  item_id TEXT NOT NULL, keyword TEXT NOT NULL COLLATE NOCASE, sentiment TEXT NOT NULL,
+  reason TEXT, labeler TEXT, labeled_at TEXT,
+  PRIMARY KEY (item_id, keyword)
+);
 """
 
 # Most specific first: a later sighting can upgrade "photo"/"unknown" to "group_post".
-KIND_RANK = ("group_post", "post", "reel", "video", "event", "marketplace", "comment", "reply", "photo", "unknown")
+KIND_RANK = ("group_post", "post", "reel", "video", "event", "marketplace", "comment", "reply", "photo",
+             "profile", "unknown")
+
+# Columns added after the first version: (name, type) for existing dataset files.
+ADDED_COLUMNS = (("price", "TEXT"), ("location", "TEXT"), ("condition", "TEXT"))
 
 # Filled in from a later sighting when an item doesn't have them yet.
 FILL_FIELDS = ("post_url", "comment_url", "parent_post_url", "author_name", "author_url",
-               "group_name", "group_url", "time_text", "time_exact", "image_text")
+               "group_name", "group_url", "time_text", "time_exact", "image_text", "price", "location", "condition")
 TIME_FIELDS = ("posted_at", "posted_date", "posted_at_precision", "posted_at_source")
 
 # pfbid ids and share links are different for every session/share.
@@ -106,6 +118,9 @@ def _comment_id(value: str) -> str:
 
 def url_key(record: dict) -> str | None:
     """Stable identity from the URL, or None when the URL changes between sessions."""
+    if record.get("kind") == "profile":   # a person/page card: the profile itself
+        u = clean_url(record.get("post_url") or record.get("author_url"))
+        return f"profile:{urlsplit(u).path.lower()}?{urlsplit(u).query}" if u else None
     if record.get("kind") in ("comment", "reply"):
         u = clean_url(record.get("comment_url"))
         if not u:
@@ -204,10 +219,18 @@ class Dataset:
         self.conn = sqlite3.connect(str(self.path))
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
-        self.conn.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(items)")}
+        for column, kind in ADDED_COLUMNS:
+            if column not in have:
+                self.conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
+        self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('schema_version', ?)", (SCHEMA_VERSION,))
         self.conn.commit()
         self.exclusions_path = self.path.with_name(EXCLUSIONS_FILE)
         self._exclusions = self._load_exclusions()
+        self.labels_path = self.path.with_name(LABELS_FILE)
+        self._labels_file = self._load_labels_file()
+        self._sync_labels()
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -252,6 +275,7 @@ class Dataset:
             counts[outcome] += 1
             touched.add(item_id)
         self._refresh_seen(touched)
+        self._sync_labels()
         self.conn.commit()
         return {"run_id": run_id, "records": len(results), **counts}
 
@@ -389,6 +413,7 @@ class Dataset:
                 kept.add(item_id)
             else:
                 self.conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
+                self.conn.execute("DELETE FROM labels WHERE item_id = ?", (item_id,))
         return kept
 
     def exclude_items(self, item_ids: list[str], reason: str) -> dict:
@@ -414,6 +439,120 @@ class Dataset:
         return {"excluded_items": len(excluded), "excluded_records": records, "not_found": missing,
                 "exclusions_file": str(self.exclusions_path.resolve()), "items_left": self.count()}
 
+    # ---- sentiment labels ---------------------------------------------------
+    # Set by an AI agent (or a person) per item and keyword, because a post can be
+    # negative about one brand and positive about another. Mirrored in labels.json
+    # so they survive a rebuild of the dataset from the run folders.
+
+    def _load_labels_file(self) -> dict[tuple[str, str], dict]:
+        try:
+            entries = json.loads(self.labels_path.read_text(encoding="utf-8")).get("labels", [])
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError, AttributeError) as exc:
+            raise ValueError(f"Can't read {self.labels_path}: {exc}") from exc
+        return {(e["item_id"], e["keyword"].lower()): e for e in entries if e.get("item_id") and e.get("keyword")}
+
+    def _save_labels_file(self) -> None:
+        data = {"about": "Sentiment labels (negative / neutral / positive) per item and keyword. "
+                         "Restored into the dataset on import.",
+                "labels": list(self._labels_file.values())}
+        self.labels_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _sync_labels(self) -> None:
+        """Put labels from labels.json back into the table (after a rebuild), following the run records."""
+        present = {(r[0], r[1].lower()) for r in self.conn.execute("SELECT item_id, keyword FROM labels")}
+        for key, e in self._labels_file.items():
+            if key in present:
+                continue
+            item_id = e["item_id"]
+            if not self.conn.execute("SELECT 1 FROM items WHERE item_id = ?", (item_id,)).fetchone():
+                item_id = next((row[0] for run_id, record_id in e.get("refs") or []
+                                for row in self.conn.execute("SELECT item_id FROM sightings WHERE run_id = ? "
+                                                             "AND record_id = ?", (run_id, record_id))), None)
+            if item_id:
+                self.conn.execute("INSERT OR REPLACE INTO labels VALUES (?,?,?,?,?,?)",
+                                  (item_id, e["keyword"], e["sentiment"], e.get("reason"), e.get("labeler"),
+                                   e.get("labeled_at")))
+
+    def label_queue(self, *, keyword: str | None = None, run_id: str | None = None, batch_id: str | None = None,
+                    limit: int = 20, text_chars: int = 1500) -> dict:
+        """Items that still need a sentiment label for the keyword(s) that found them."""
+        clauses, params = ["l.item_id IS NULL"], []
+        if keyword:
+            clauses.append("s.keyword = ? COLLATE NOCASE")
+            params.append(keyword)
+        if run_id:
+            clauses.append("s.run_id = ?")
+            params.append(run_id)
+        if batch_id:
+            clauses.append("r.batch_id = ?")
+            params.append(batch_id)
+        base = (" FROM sightings s JOIN runs r ON r.run_id = s.run_id "
+                "LEFT JOIN labels l ON l.item_id = s.item_id AND l.keyword = s.keyword COLLATE NOCASE "
+                "WHERE " + " AND ".join(clauses))
+        pairs = self.conn.execute("SELECT DISTINCT s.item_id, s.keyword" + base + " ORDER BY s.item_id, s.keyword",
+                                  params).fetchall()
+        out = []
+        for item_id, kw in pairs[: max(1, int(limit))]:
+            row = self.conn.execute("SELECT * FROM items WHERE item_id = ?", (item_id,)).fetchone()
+            text = row["text"] or ""
+            out.append({
+                "item_id": item_id, "keyword": kw, "kind": row["kind"], "language": row["language"],
+                "text": text[:text_chars] + ("…" if len(text) > text_chars else ""),
+                "image_text": row["image_text"], "author_name": row["author_name"], "group_name": row["group_name"],
+                "price": row["price"], "url": row["comment_url"] or row["post_url"], "posted_date": row["posted_date"],
+                "screenshot_path": row["screenshot_path"],
+            })
+        return {"to_label": out, "remaining": len(pairs)}
+
+    def label_items(self, labels: list[dict], labeler: str = "agent") -> dict:
+        """Save sentiment labels: [{item_id, sentiment, reason, keyword?}]. The keyword may be left out when
+        the item was found by only one keyword."""
+        done, errors = 0, []
+        for entry in labels:
+            item_id = (entry.get("item_id") or "").strip()
+            sentiment = (entry.get("sentiment") or "").strip().lower()
+            if sentiment not in SENTIMENTS:
+                errors.append(f"{item_id or '?'}: sentiment must be one of {', '.join(SENTIMENTS)}")
+                continue
+            found = [r[0] for r in self.conn.execute("SELECT DISTINCT keyword FROM sightings WHERE item_id = ?",
+                                                     (item_id,))]
+            if not found:
+                errors.append(f"{item_id or '?'}: no such item")
+                continue
+            keyword = (entry.get("keyword") or "").strip()
+            if not keyword:
+                if len(found) > 1:
+                    errors.append(f"{item_id}: found by several keywords ({', '.join(found)}); say which one")
+                    continue
+                keyword = found[0]
+            keyword = next((k for k in found if k.lower() == keyword.lower()), keyword)
+            reason = (entry.get("reason") or "").strip()[:300] or None
+            now = utc_now_iso()
+            self.conn.execute("INSERT OR REPLACE INTO labels VALUES (?,?,?,?,?,?)",
+                              (item_id, keyword, sentiment, reason, labeler, now))
+            refs = [list(r) for r in self.conn.execute("SELECT run_id, record_id FROM sightings WHERE item_id = ?",
+                                                       (item_id,))]
+            self._labels_file[(item_id, keyword.lower())] = {
+                "item_id": item_id, "keyword": keyword, "sentiment": sentiment, "reason": reason,
+                "labeler": labeler, "labeled_at": now, "refs": refs}
+            done += 1
+        if done:
+            self._save_labels_file()
+        self.conn.commit()
+        return {"labeled": done, "errors": errors}
+
+    def _labels_for(self, item_ids: list[str]) -> dict[str, list[dict]]:
+        out: dict[str, list[dict]] = {}
+        for chunk in (item_ids[i:i + 500] for i in range(0, len(item_ids), 500)):
+            q = (f"SELECT item_id, keyword, sentiment, reason FROM labels "
+                 f"WHERE item_id IN ({', '.join('?' * len(chunk))}) ORDER BY keyword")
+            for r in self.conn.execute(q, chunk):
+                out.setdefault(r["item_id"], []).append(
+                    {"keyword": r["keyword"], "sentiment": r["sentiment"], "reason": r["reason"]})
+        return out
+
     def _refresh_seen(self, item_ids: set[str]) -> None:
         for item_id in item_ids:
             self.conn.execute(
@@ -430,8 +569,25 @@ class Dataset:
     @staticmethod
     def _where(keyword: str | None = None, kind: str | list[str] | None = None,
                language: str | list[str] | None = None, group: str | None = None, since: str | None = None,
-               until: str | None = None, contains: str | None = None) -> tuple[str, list]:
+               until: str | None = None, contains: str | None = None, sentiment: str | list[str] | None = None,
+               run_id: str | None = None, batch_id: str | None = None) -> tuple[str, list]:
         clauses, params = [], []
+        if run_id:
+            clauses.append("item_id IN (SELECT item_id FROM sightings WHERE run_id = ?)")
+            params.append(run_id)
+        if batch_id:
+            clauses.append("item_id IN (SELECT s.item_id FROM sightings s JOIN runs r ON r.run_id = s.run_id "
+                           "WHERE r.batch_id = ?)")
+            params.append(batch_id)
+        sentiments = [v.lower() for v in _split_list(sentiment)]
+        if sentiments:
+            sub = f"SELECT item_id FROM labels WHERE sentiment IN ({', '.join('?' * len(sentiments))})"
+            params_sub = list(sentiments)
+            if keyword:
+                sub += " AND keyword = ? COLLATE NOCASE"
+                params_sub.append(keyword)
+            clauses.append(f"item_id IN ({sub})")
+            params.extend(params_sub)
         if keyword:
             clauses.append("item_id IN (SELECT item_id FROM sightings WHERE keyword = ? COLLATE NOCASE)")
             params.append(keyword)
@@ -450,8 +606,8 @@ class Dataset:
             clauses.append("posted_date <= ?")
             params.append(until)
         if contains:
-            clauses.append("(text LIKE ? OR image_text LIKE ?)")
-            params.extend([f"%{contains}%"] * 2)
+            clauses.append("(text LIKE ? OR image_text LIKE ? OR price LIKE ? OR location LIKE ?)")
+            params.extend([f"%{contains}%"] * 4)
         return ("WHERE " + " AND ".join(clauses)) if clauses else "", params
 
     def _count_by(self, column: str, where: str, params: list, limit: int | None = None) -> dict:
@@ -474,6 +630,12 @@ class Dataset:
         run_sql = "SELECT COUNT(*) FROM runs" + (" WHERE keyword = ? COLLATE NOCASE" if keyword else "")
         runs = self.conn.execute(run_sql, [keyword] if keyword else []).fetchone()[0]
         month = "substr(posted_date, 1, 7)"
+        label_sql = f"SELECT sentiment, COUNT(DISTINCT item_id) AS n FROM labels WHERE item_id IN (SELECT item_id FROM items {where})"
+        label_params = list(params)
+        if keyword:
+            label_sql += " AND keyword = ? COLLATE NOCASE"
+            label_params.append(keyword)
+        by_sentiment = {r["sentiment"]: r["n"] for r in self.conn.execute(label_sql + " GROUP BY sentiment", label_params)}
         return {
             "dataset": str(self.path.resolve()),
             "runs": runs,
@@ -486,6 +648,8 @@ class Dataset:
             "by_keyword": by_keyword,
             "by_kind": self._count_by("kind", where, params),
             "by_language": self._count_by("language", where, params),
+            "by_sentiment": by_sentiment,
+            "not_labeled": total - self.count(keyword=keyword, sentiment=list(SENTIMENTS)),
             "by_month_posted": dict(sorted(self._count_by(month, where, params).items())),
             "top_groups": self._count_by("group_name", (where + " AND " if where else "WHERE ")
                                          + "group_name IS NOT NULL", params, limit=10),
@@ -504,8 +668,18 @@ class Dataset:
             q = f"SELECT DISTINCT item_id, keyword FROM sightings WHERE item_id IN ({', '.join('?' * len(chunk))})"
             for r in self.conn.execute(q, chunk):
                 keywords.setdefault(r["item_id"], []).append(r["keyword"])
+        labels = self._labels_for(ids)
+        want = (filters.get("keyword") or "").lower()
         for r in rows:
             r["keywords"] = sorted(k for k in keywords.get(r["item_id"], []) if k)
+            r["labels"] = labels.get(r["item_id"], [])
+            chosen = [l for l in r["labels"] if l["keyword"].lower() == want] if want else r["labels"]
+            if len(chosen) == 1:
+                r["sentiment"], r["sentiment_reason"] = chosen[0]["sentiment"], chosen[0]["reason"]
+            else:   # none, or several keywords: "Brand X: negative | Brand Y: neutral"
+                r["sentiment"] = " | ".join(f"{l['keyword']}: {l['sentiment']}" for l in chosen) or None
+                r["sentiment_reason"] = " | ".join(f"{l['keyword']}: {l['reason']}" for l in chosen
+                                                   if l["reason"]) or None
             if text_chars and r.get("text") and len(r["text"]) > text_chars:
                 r["text"] = r["text"][:text_chars] + "…"
         return rows

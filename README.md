@@ -6,6 +6,10 @@ really contain the keyword, screenshots each one with the keyword highlighted,
 and saves a `results.json` with metadata** (post URL, kind, author, group,
 time, text, screenshot name).
 
+It also searches **Marketplace** listings, and can return **only negative posts**:
+Claude reads every result and labels it negative / neutral / positive with a reason
+(see [docs/SENTIMENT.md](docs/SENTIMENT.md)).
+
 Every run also goes into one **SQLite dataset** where the same post found by
 several runs is merged. It adds parsed dates, language detection (English / Urdu /
 Roman Urdu / ...) and the text Facebook read from images. A study file runs
@@ -44,7 +48,7 @@ plugins/fb-scout/
       export.py    CSV / JSONL / Parquet, anonymized exports
       mcp_server.py / cli.py / api.py
     tests/         unit tests + offline browser tests on fake Facebook pages
-docs/PLAN.md, docs/MVP.md, docs/DATASET.md
+docs/PLAN.md, docs/MVP.md, docs/DATASET.md, docs/SENTIMENT.md
 examples/study.example.json         ← a study file to copy
 ```
 
@@ -91,13 +95,20 @@ In Claude Code:
 ```
 /fb-scout:fb-search "solar panel" max=15
 /fb-scout:fb-search "Brand X" group=https://www.facebook.com/groups/123456 comments
+/fb-scout:fb-search "Brand X problem" match=all negative
+/fb-scout:fb-search "solar panel" marketplace city=karachi details
 /fb-scout:fb-batch examples/study.example.json
 /fb-scout:fb-dataset stats
 /fb-scout:fb-dataset export language=ur,ur-Latn anonymize
 ```
 Or just ask: *"search facebook for 'Brand X' and save 20 posts"*, *"run 'Brand X'
 and 'Brand Y' in these three groups"*, *"how many Roman Urdu posts did we collect in
-September?"*, *"give me a CSV for Excel"*.
+September?"*, *"give me a CSV for Excel"*, *"show me only the complaints about Brand X"*,
+*"find solar panels for sale on Marketplace in Lahore"*.
+
+By default a post only counts when the keyword is in the post itself. Results where it is
+only in a person's, page's or group's name (and profile / group-member cards) are left out;
+switch them on with `names` / `include_name_matches` / `--name-matches`.
 
 **First run:** the agent sees you're not logged in and logs you in once.
 Pick one of three ways:
@@ -129,6 +140,7 @@ fb-scout-output/<keyword>/<timestamp>/results.json
                                      /screenshots/001_post_3f2a9c1b.png ...
 fb-scout-output/fbscout.sqlite        ← the dataset: all runs, duplicates merged
 fb-scout-output/exclusions.json       ← records left out of the dataset, with reasons
+fb-scout-output/labels.json           ← sentiment labels, restored on rebuild
 fb-scout-output/_exports/             ← CSV / JSONL / Parquet exports
 fb-scout-output/_batches/             ← study (batch) reports
 ```
@@ -163,12 +175,15 @@ Set `FBSCOUT_OUTPUT_DIR` for the scheduled task so results land in the same fold
 uv run fbscout login                      # normal Chrome window, close it after logging in
 uv run fbscout login --from-firefox       # or: copy the login from Firefox
 uv run fbscout login --cookies file.txt   # or: import an exported cookie file
-uv run fbscout search "solar panel" --max 20 [--group URL] [--match all] [--comments] [--blur-names] [--show-browser]
+uv run fbscout search "solar panel" --max 20 [--group URL] [--match all] [--comments] [--name-matches] [--blur-names] [--show-browser]
+uv run fbscout search "solar panel" --marketplace [--location karachi] [--listing-details]
 uv run fbscout batch study.json [--dry-run]
 uv run fbscout runs
 uv run fbscout db stats [--keyword K]
 uv run fbscout db export [--format csv|jsonl|parquet] [--anonymize] [--keyword K] [--language ur,ur-Latn] [--since 2026-09-01]
 uv run fbscout db exclude i_... --reason "off-topic"   # leave items out (run folders stay unchanged)
+uv run fbscout db label i_... --sentiment negative --reason "..."   # label by hand (e.g. a gold set)
+uv run fbscout db export --sentiment negative --keyword "Brand X"    # only the negatives
 uv run fbscout db import                  # runs made before v0.2, or copied from elsewhere
 ```
 
@@ -190,11 +205,13 @@ uv run fbscout db import                  # runs made before v0.2, or copied fro
 |---|---|
 | `fb_status` | Logged in? Which browser? Where do results go? |
 | `fb_login` | `method`: `browser` (normal Chrome window, close it when logged in), `firefox` (copy login), `cookie_file` (+ `cookie_file` path); `force` to switch account |
-| `fb_search` | `keyword`, `max_results`, `group_url`, `match_mode` (`phrase`/`all`/`any`), `include_comments`, `max_comment_posts`, `output_dir`, `save_unverified`, `highlight`, `max_minutes`, `show_browser`, `blur_names` |
-| `fb_batch` | A study: `study_file`, or `keywords` + `group_urls` (+ the search options); `dry_run` shows the plan |
+| `fb_search` | `keyword`, `max_results`, `source` (`posts`/`marketplace`), `group_url`, `match_mode` (`phrase`/`all`/`any`), `include_comments`, `max_comment_posts`, `include_name_matches`, `marketplace_location`, `listing_details`, `only_negative`, `output_dir`, `save_unverified`, `highlight`, `max_minutes`, `show_browser`, `blur_names` |
+| `fb_batch` | A study: `study_file`, or `keywords` + `group_urls` (+ `include_marketplace` and the search options); `dry_run` shows the plan |
 | `fb_list_runs` | Previous runs with stats |
 | `fb_dataset_stats` | Distinct items by keyword, kind, language, month posted, group |
-| `fb_dataset_items` | Items with filters (`keyword`, `kind`, `language`, `group`, `since`, `until`, `contains`), paged |
+| `fb_dataset_items` | Items with filters (`keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`, `since`, `until`, `contains`), paged |
+| `fb_label_queue` | Items that still need a sentiment label, with their text |
+| `fb_label_items` | Save labels: negative / neutral / positive + reason (rubric in the tool description) |
 | `fb_export` | CSV / JSONL / Parquet with the same filters; `anonymize` |
 | `fb_exclude_items` | Leave items out of the dataset with a reason (kept in `exclusions.json`) |
 | `fb_import_runs` | Import existing run folders into the dataset (safe to repeat) |

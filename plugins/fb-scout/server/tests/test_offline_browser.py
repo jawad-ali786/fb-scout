@@ -296,3 +296,22 @@ def test_highlight_marks_words_joined_by_special_characters():
     n, marked, urdu = run_on_page("post.html", body)
     assert marked == ["Solar+Panel", "solar-panel", "SOLAR PANEL", "solarpanel", "solar_panel", "solar🌞panel"] and n == 6
     assert urdu == 1                                   # Urdu letters are letters, not separators
+
+
+def test_include_name_matches_keeps_name_only_posts_and_profile_cards(tmp_path):
+    opts = SearchOptions(keyword="solar panel", max_results=20, include_name_matches=True).normalized()
+
+    async def body(page):
+        run = RunWriter(tmp_path, opts.keyword, {})
+        return run, await collect_posts(page, opts, run, deadline=time.monotonic() + 120)
+
+    run, records = run_on_page("search.html", body)
+    assert run.stats["skipped_not_posts"] == 0
+    by_text = {r["text"][:20]: r for r in records}
+    group_name_only = by_text["FOR SALE: lithium ba"]
+    assert group_name_only["matched_in"] == "name" and group_name_only["kind"] == "group_post"
+    card = next(r for r in records if r["kind"] == "profile")
+    assert card["matched_in"] == "profile" and card["post_url"] == "https://www.facebook.com/solarpanel.ali/"
+    assert card["author_name"] == "Ali (Solar Panel expert)"
+    assert not any("hybrid inverter range" in r["text"] for r in records)   # comment preview still doesn't count
+    assert len(records) == 9

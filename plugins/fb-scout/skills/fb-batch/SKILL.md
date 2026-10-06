@@ -1,8 +1,8 @@
 ---
 name: fb-batch
-description: Run a Facebook research study with FB Scout. Searches several keywords, both in global search and inside a fixed list of Facebook groups, one search at a time, and adds every run to the dataset. Use when the user wants to search more than one keyword or more than one group, monitor a list of groups, run or repeat a study file, or schedule regular collection.
-argument-hint: "<study.json> | keywords=<k1,k2> groups=<url1,url2> [max=20] [no-global] [comments] [blur]"
-allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_status, mcp__plugin_fb-scout_fb-scout__fb_login, mcp__plugin_fb-scout_fb-scout__fb_batch, mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, Read
+description: Run a Facebook research study with FB Scout. Searches several keywords in global search, inside a fixed list of Facebook groups and optionally on Marketplace, one search at a time, and adds every run to the dataset. Can keep only negative posts by labeling the results afterwards. Use when the user wants to search more than one keyword or more than one group, monitor a list of groups, run or repeat a study file, or schedule regular collection.
+argument-hint: "<study.json> | keywords=<k1,k2> groups=<url1,url2> [max=20] [no-global] [marketplace] [comments] [negative] [blur]"
+allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_status, mcp__plugin_fb-scout_fb-scout__fb_login, mcp__plugin_fb-scout_fb-scout__fb_batch, mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_label_queue, mcp__plugin_fb-scout_fb-scout__fb_label_items, Read
 ---
 
 # Facebook research study (FB Scout batch)
@@ -14,8 +14,10 @@ User request: $ARGUMENTS
 Either:
 - **A study file**: a path to a `.json` file → `study_file`. `Read` it if the user asks what's in it.
 - **Inline**: `keywords` (list), `group_urls` (list of Facebook group URLs), `include_global` (false if
-  the user says `no-global` or "only in the groups"), `max_results` (`max=N`, default 20),
-  `include_comments`, `blur_names`.
+  the user says `no-global` or "only in the groups"), `include_marketplace` (also search Marketplace
+  listings; `marketplace_location` for a city, `listing_details` to open listings), `max_results`
+  (`max=N`, default 20), `include_comments`, `include_name_matches` (only if asked), `blur_names`.
+- Negative only ("negative", "complaints"): run the study normally, then label it (step 6).
 
 If there are no keywords, ask for them and stop.
 
@@ -49,6 +51,13 @@ Call `fb_batch` once without `dry_run`. It runs in a hidden browser, one search 
 - `dataset_totals`: distinct items in the dataset and per keyword.
 - `report_file`: the batch report (JSON).
 - Offer `/fb-scout:fb-dataset` to look at the results or export them.
+
+## 6. Negative only
+
+If the user wants only negative posts: call `fb_label_queue` with the study's `batch_id`, read each text,
+save labels with `fb_label_items` (same rubric and steps as `/fb-scout:fb-search` step 4), repeat until
+`remaining` is 0, then report `fb_dataset_items` filtered by `sentiment: "negative"`
+per keyword. For a large study, tell the user how many items need labeling first, and label in batches.
 
 ## Scheduling
 

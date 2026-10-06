@@ -1,8 +1,8 @@
 ---
 name: fb-dataset
 description: Look at, filter and export everything FB Scout has collected. All runs are merged into one dataset with duplicates removed. Gives counts by keyword, kind, language, month posted and group, lists posts and comments with their text, dates and screenshots, exports CSV (Excel), JSONL or Parquet, optionally anonymized, and leaves out items the user marks as false positives or off-topic. Use when the user asks what has been collected, wants numbers or trends, wants to see or read collected posts, or wants an export, CSV or Excel file, or wants posts removed from the dataset.
-argument-hint: "[stats | list | export] [keyword=...] [kind=...] [language=en,ur,ur-Latn] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [format=csv|jsonl|parquet] [anonymize]"
-allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_export, mcp__plugin_fb-scout_fb-scout__fb_exclude_items, mcp__plugin_fb-scout_fb-scout__fb_import_runs, Read
+argument-hint: "[stats | list | label | export] [keyword=...] [kind=...] [language=en,ur,ur-Latn] [sentiment=negative] [since=YYYY-MM-DD] [until=YYYY-MM-DD] [format=csv|jsonl|parquet] [anonymize]"
+allowed-tools: mcp__plugin_fb-scout_fb-scout__fb_dataset_stats, mcp__plugin_fb-scout_fb-scout__fb_dataset_items, mcp__plugin_fb-scout_fb-scout__fb_export, mcp__plugin_fb-scout_fb-scout__fb_label_queue, mcp__plugin_fb-scout_fb-scout__fb_label_items, mcp__plugin_fb-scout_fb-scout__fb_exclude_items, mcp__plugin_fb-scout_fb-scout__fb_import_runs, Read
 ---
 
 # FB Scout dataset
@@ -32,6 +32,14 @@ runs that found it. No browser is needed, so these tools are fast and safe to ca
     project. Authors become stable pseudonyms (`author_id`) and all URLs are removed. Always pass on
     the warning: names inside the post text and in screenshots are not removed.
 
+- **Sentiment** ("which posts are negative?", "label the complaints", "only negative ones"): items that
+  have no label yet come from `fb_label_queue` (optionally per `keyword`, `run_id` or `batch_id`); read
+  them and save labels with `fb_label_items`, following the rubric in that tool's description (same steps
+  as `/fb-scout:fb-search` step 4). Then filter `fb_dataset_items` / `fb_export` with
+  `sentiment: "negative"`. `fb_dataset_stats` shows `by_sentiment` and `not_labeled`. Labels are per item
+  and keyword (a post can be negative about one brand and positive about another).
+- **Marketplace listings**: `kind: "marketplace"`; they have `price`, `location` and, when details were
+  opened, `condition` and the seller as author.
 - **Remove items** ("this one is not about the brand", "drop the false positives"): show the user the
   items first (`fb_dataset_items`) and remove only the ones they confirm, with `fb_exclude_items`
   (`item_ids`, a short `reason`). They stay out of later imports; the run folders are not changed.
@@ -41,6 +49,8 @@ runs that found it. No browser is needed, so these tools are fast and safe to ca
 
 `en` English, `ur` Urdu (Urdu script), `ur-Latn` Roman Urdu, `tl` Tagalog, `ar`, `fa`, `hi`, `bn`,
 `und` = undetermined (e.g. only hashtags).
+
+Sentiment labels: `negative`, `neutral`, `positive` (set by Claude, or by hand with `fbscout db label`).
 
 ## Problems
 

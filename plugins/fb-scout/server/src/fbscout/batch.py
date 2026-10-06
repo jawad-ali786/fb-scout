@@ -56,6 +56,10 @@ class Study:
     blur_names: bool = False
     headless: bool = True
     output_dir: str | None = None
+    include_marketplace: bool = False         # also one Marketplace search per keyword
+    marketplace_location: str | None = None
+    listing_details: bool = False
+    include_name_matches: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "Study":
@@ -99,8 +103,9 @@ class Study:
                 raise ValueError(f"Not a Facebook group URL: {g!r}")
             roots.append(root)
         self.groups = list(dict.fromkeys(roots))
-        if not self.include_global and not self.groups:
-            raise ValueError("Nothing to search: include_global is false and the study has no groups.")
+        if not self.include_global and not self.groups and not self.include_marketplace:
+            raise ValueError("Nothing to search: include_global and include_marketplace are false and the study "
+                             "has no groups.")
         if self.match_mode not in MODES:
             raise ValueError(f"match_mode must be one of {MODES}")
         pauses = list(self.pause_seconds) if isinstance(self.pause_seconds, (list, tuple)) else []
@@ -113,15 +118,19 @@ class Study:
                              "Split it into several study files and run them on different days.")
 
     def plan(self, batch_id: str | None = None) -> list[SearchOptions]:
-        scopes: list[str | None] = ([None] if self.include_global else []) + list(self.groups)
+        # (source, group_url) per search: global posts, each group, then Marketplace.
+        scopes: list[tuple[str, str | None]] = (
+            ([("posts", None)] if self.include_global else []) + [("posts", g) for g in self.groups]
+            + ([("marketplace", None)] if self.include_marketplace else []))
         return [
             SearchOptions(
-                keyword=k, group_url=g, max_results=self.max_results, match_mode=self.match_mode,
-                include_comments=self.include_comments, max_comment_posts=self.max_comment_posts,
+                keyword=k, group_url=g, source=src, max_results=self.max_results, match_mode=self.match_mode,
+                include_comments=self.include_comments and src == "posts", max_comment_posts=self.max_comment_posts,
                 output_dir=self.output_dir, headless=self.headless, max_minutes=self.max_minutes_per_search,
-                blur_names=self.blur_names, batch_id=batch_id,
+                blur_names=self.blur_names, batch_id=batch_id, marketplace_location=self.marketplace_location,
+                listing_details=self.listing_details, include_name_matches=self.include_name_matches,
             )
-            for k in self.keywords for g in scopes
+            for k in self.keywords for src, g in scopes
         ]
 
     def describe(self) -> dict:
@@ -131,9 +140,15 @@ class Study:
         return {
             "name": self.name,
             "searches": len(plan),
-            "plan": [{"keyword": o.keyword, "scope": o.group_url or "global search"} for o in plan],
+            "plan": [{"keyword": o.keyword, "scope": _where(o)} for o in plan],
             "estimated_minutes": round(len(plan) * per_search + max(0, len(plan) - 1) * pause),
         }
+
+
+def _where(opts: SearchOptions) -> str:
+    if opts.source == "marketplace":
+        return "Marketplace" + (f" ({opts.marketplace_location})" if opts.marketplace_location else "")
+    return opts.group_url or "global search"
 
 
 def _error_code(result: dict) -> str | None:
@@ -177,7 +192,7 @@ async def run_batch(study: Study, search: SearchFn, progress: Progress = None,
             delay = random.uniform(*study.pause_seconds) * pace_factor()
             await say(f"waiting {delay:.0f}s before search {i + 1}/{total}", i)
             await sleep(delay)
-        where = opts.group_url or "global search"
+        where = _where(opts)
         await say(f"search {i + 1}/{total}: {opts.keyword!r} in {where}", i)
 
         async def sub(message: str, done: int, of: int, _i: int = i) -> None:
@@ -187,7 +202,7 @@ async def run_batch(study: Study, search: SearchFn, progress: Progress = None,
         code = _error_code(result)
         report["runs"].append({
             "keyword": opts.keyword,
-            "scope": "search:group" if opts.group_url else "search:posts",
+            "scope": opts.scope,
             "group_url": opts.group_url,
             "status": result.get("status") or ("completed" if result.get("ok") else "failed"),
             "error": code,

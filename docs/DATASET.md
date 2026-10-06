@@ -8,6 +8,7 @@ same post found by several runs becomes a single item:
 fb-scout-output/
 ├── fbscout.sqlite          ← the dataset (all runs, duplicates merged)
 ├── exclusions.json         ← records left out of the dataset, with reasons
+├── labels.json             ← sentiment labels (negative / neutral / positive), see SENTIMENT.md
 ├── _exports/               ← CSV / JSONL / Parquet exports
 ├── _batches/               ← one report per study (batch) run
 └── <keyword>/<timestamp>/  ← the runs, as before
@@ -32,7 +33,7 @@ is idempotent: importing a run again adds nothing. The path can be changed with 
 | Column | Meaning |
 |---|---|
 | `item_id` | stable id of the post/comment in the dataset (`i_…`) |
-| `kind` | `post`, `group_post`, `comment`, `reply`, `reel`, `video`, `photo`, `event`, `marketplace`, `unknown` (the most specific kind any run saw) |
+| `kind` | `post`, `group_post`, `comment`, `reply`, `reel`, `video`, `photo`, `event`, `marketplace` (a listing), `profile` (a person/page card, only with `include_name_matches`), `unknown` (the most specific kind any run saw) |
 | `post_url`, `comment_url`, `parent_post_url` | cleaned URLs |
 | `author_name`, `author_url`, `group_name`, `group_url` | |
 | `text` | the longest text any run captured (e.g. with "See more" expanded) |
@@ -42,8 +43,11 @@ is idempotent: importing a run again adds nothing. The path can be changed with 
 | `posted_at_precision` | `minute`, `hour`, `day`, `week`, `month` or `year` |
 | `posted_at_source` | `time_exact` (tooltip) or `time_text` (relative label) |
 | `language` | see §4 |
+| `price`, `location`, `condition` | Marketplace listings: price as shown (`PKR8,000`, `FREE`), place, condition (`Used – good`, with `listing_details`) |
 | `screenshot_path` | first screenshot, relative to the output folder |
 | `first_seen`, `last_seen`, `times_seen` | when runs found it, and in how many runs |
+
+A fourth table, `labels`, holds the sentiment labels per item and keyword (see [SENTIMENT.md](SENTIMENT.md)).
 
 To use the tables directly: `sqlite3 fb-scout-output/fbscout.sqlite`, DB Browser for SQLite,
 `pandas.read_sql`, or R's `DBI`.
@@ -160,8 +164,9 @@ can be read later (e.g. by the Phase 3 LLM step) when needed.
 | `jsonl` | scripts, LLM labelling |
 | `parquet` | pandas/Arrow; needs `uv sync --extra parquet` in `plugins/fb-scout/server` |
 
-Filters: `keyword`, `kind`, `language`, `group`, `since`/`until` (posted date),
-`contains`.
+Filters: `keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`,
+`since`/`until` (posted date), `contains` (text, image text, price or location). Columns
+include `sentiment`, `sentiment_reason`, `price`, `location` and `condition`.
 
 **Anonymized export** (`--anonymize` / `anonymize: true`): `author_name` and `author_url`
 are replaced by `author_id`, a pseudonym that stays the same across exports
@@ -193,6 +198,10 @@ to `_batches/<batch_id>.json`. See [`examples/study.example.json`](../examples/s
 | `max_minutes_per_search` | 10 | |
 | `pause_seconds` | `[60, 180]` | random pause between searches (× `FBSCOUT_PACE`) |
 | `blur_names` | `false` | |
+| `include_marketplace` | `false` | also one Marketplace search per keyword |
+| `marketplace_location` | near the account | Marketplace city (`karachi`) or location id |
+| `listing_details` | `false` | open each kept listing (description, seller, condition, date) |
+| `include_name_matches` | `false` | keep keyword-only-in-a-name posts and profile cards |
 | `output_dir` | default output folder | |
 
 At most 50 searches per batch. For repeated collection, schedule the CLI with Task

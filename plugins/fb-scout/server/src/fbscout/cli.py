@@ -2,11 +2,13 @@
 
     fbscout status
     fbscout login [--from-firefox | --cookies FILE] [--force] [--timeout 600]
-    fbscout search "keyword" [--max 20] [--group URL] [--match phrase|all|any] [--comments] [--blur-names] ...
+    fbscout search "keyword" [--max 20] [--group URL | --marketplace [--location CITY] [--listing-details]]
+                   [--match phrase|all|any] [--comments] [--name-matches] [--blur-names] ...
     fbscout batch study.json [--dry-run]
     fbscout runs [--keyword K]
     fbscout db import | stats [--keyword K] | export [--format csv|jsonl|parquet] [--anonymize] [filters]
     fbscout db exclude ITEM_ID... --reason TEXT
+    fbscout db label ITEM_ID... --sentiment negative|neutral|positive [--reason TEXT] [--keyword K]
 """
 
 from __future__ import annotations
@@ -30,6 +32,9 @@ def _add_filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--since", help="posted on or after this date (YYYY-MM-DD)")
     p.add_argument("--until", help="posted on or before this date (YYYY-MM-DD)")
     p.add_argument("--contains", help="text or image text contains this")
+    p.add_argument("--sentiment", help="comma-separated labels: negative,neutral,positive")
+    p.add_argument("--run", dest="run_id", help="only items found by this run (run_id)")
+    p.add_argument("--batch", dest="batch_id", help="only items found by this study (batch_id)")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -50,6 +55,11 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("keyword")
     s.add_argument("--max", type=int, default=20, dest="max_results", help="matches to save (1-100, default 20)")
     s.add_argument("--group", dest="group_url", help="search inside this Facebook group URL")
+    s.add_argument("--marketplace", action="store_true", help="search Marketplace listings instead of posts")
+    s.add_argument("--location", dest="marketplace_location", help="Marketplace city (e.g. karachi) or location id")
+    s.add_argument("--listing-details", action="store_true", help="open each kept listing for description, seller, date")
+    s.add_argument("--name-matches", dest="include_name_matches", action="store_true",
+                   help="also keep posts whose keyword is only in a person's/page's/group's name, and profile cards")
     s.add_argument("--match", dest="match_mode", choices=["phrase", "all", "any"], default="phrase")
     s.add_argument("--comments", dest="include_comments", action="store_true", help="also capture matching comments (experimental)")
     s.add_argument("--comment-posts", dest="max_comment_posts", type=int, default=5, help="posts to scan for comments (default 5)")
@@ -80,6 +90,12 @@ def _parser() -> argparse.ArgumentParser:
     exc.add_argument("item_ids", nargs="+", metavar="ITEM_ID", help="item ids (i_...) from stats/export")
     exc.add_argument("--reason", required=True, help="why, e.g. 'not about the brand'")
     exc.add_argument("--out", dest="output_dir")
+    lb = dbsub.add_parser("label", help="set a sentiment label by hand (e.g. for a hand-checked gold set)")
+    lb.add_argument("item_ids", nargs="+", metavar="ITEM_ID")
+    lb.add_argument("--sentiment", required=True, choices=["negative", "neutral", "positive"])
+    lb.add_argument("--reason")
+    lb.add_argument("--keyword", help="needed when the item was found by several keywords")
+    lb.add_argument("--out", dest="output_dir")
     ex = dbsub.add_parser("export", help="export items as CSV (Excel), JSONL or Parquet")
     ex.add_argument("--out", dest="output_dir")
     ex.add_argument("--format", dest="fmt", choices=["csv", "jsonl", "parquet"], default="csv")
@@ -94,7 +110,8 @@ async def _cli_progress(message: str, done: int, total: int) -> None:
 
 
 def _filters(args: argparse.Namespace) -> dict:
-    return {k: getattr(args, k) for k in ("keyword", "kind", "language", "group", "since", "until", "contains")}
+    return {k: getattr(args, k) for k in ("keyword", "kind", "language", "group", "since", "until", "contains",
+                                          "sentiment", "run_id", "batch_id")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,6 +148,10 @@ def main(argv: list[str] | None = None) -> int:
             headless=not args.show_browser,
             max_minutes=args.max_minutes,
             blur_names=args.blur_names,
+            source="marketplace" if args.marketplace else "posts",
+            marketplace_location=args.marketplace_location,
+            listing_details=args.listing_details,
+            include_name_matches=args.include_name_matches,
         )
         result = asyncio.run(api.search(opts, _cli_progress))
     elif args.cmd == "batch":
@@ -150,6 +171,9 @@ def main(argv: list[str] | None = None) -> int:
             result = api.dataset_stats(args.output_dir, args.keyword)
         elif args.db_cmd == "exclude":
             result = api.dataset_exclude(args.item_ids, args.reason, args.output_dir)
+        elif args.db_cmd == "label":
+            result = api.label_items([{"item_id": i, "sentiment": args.sentiment, "reason": args.reason,
+                                       "keyword": args.keyword} for i in args.item_ids], args.output_dir, "human")
         else:
             result = api.dataset_export(args.output_dir, args.fmt, args.out_file, args.anonymize, **_filters(args))
     else:

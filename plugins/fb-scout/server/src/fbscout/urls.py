@@ -187,6 +187,14 @@ def build_search_url(keyword: str, group_url: str | None = None) -> str:
     return f"{BASE}/search/posts/?q={q}"
 
 
+def build_marketplace_url(keyword: str, location: str | None = None) -> str:
+    """Marketplace search, near the account's location or in `location` (a city name such as
+    'karachi' or Facebook's numeric location id, as in /marketplace/<location>/search/)."""
+    q = quote(keyword, safe="")
+    loc = (location or "").strip().strip("/")
+    return f"{BASE}/marketplace/{quote(loc, safe='')}/search/?query={q}" if loc else f"{BASE}/marketplace/search/?query={q}"
+
+
 def pick_permalink(links: list[dict]) -> dict | None:
     """Best post permalink among a post's links (dicts with 'href').
 

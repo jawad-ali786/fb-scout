@@ -56,6 +56,7 @@ signals, product complaints).
 ┌───────────────▼──────────────────────────────────────────────────┐
 │  MCP server  (fbscout-mcp)                                       │
 │  tools: fb_status · fb_login · fb_search · fb_batch ·            │
+│         fb_label_queue · fb_label_items ·                        │
 │         fb_list_runs · fb_dataset_stats · fb_dataset_items ·     │
 │         fb_export · fb_exclude_items · fb_import_runs            │
 └───────────────┬──────────────────────────────────────────────────┘
@@ -209,6 +210,13 @@ as posts. Still open: installing from GitHub on a second machine with Claude Cod
 - ✅ Anonymisation: pseudonymous `author_id` + URL removal in exports; `blur_names` blurs
   names and profile pictures in screenshots (faces in photos are not blurred)
 - ✅ CSV (Excel-ready) / JSONL / Parquet export with filters
+
+### Added in v0.3 (between Phase 2 and 3)
+- ✅ **Marketplace** as a source: listings (title, price, location, link, card screenshot); with
+  `listing_details` also description, seller, condition and listing date
+- ✅ `include_name_matches`: optionally keep posts whose keyword is only in a name, and profile cards
+- ✅ **Negative only**: Claude labels results negative / neutral / positive with a reason
+  ([SENTIMENT.md](SENTIMENT.md)); the first part of Phase 3's "LLM classification"
 
 ### Phase 3: Sentiment and brand analysis
 - **Sentiment** (positive / negative / neutral) per record

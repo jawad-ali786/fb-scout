@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Facebook</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #fff; margin: 0; }
+  [role="main"] { width: 1000px; margin: 20px auto; }
+  .grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .grid a { display: block; width: 240px; height: 320px; color: #000; text-decoration: none; }
+  .grid img { width: 240px; height: 220px; background: #ddd; display: block; }
+  .grid span { display: block; }
+</style>
+</head>
+<body>
+<!-- Like Facebook Marketplace search: links to /marketplace/item/<id>/ with "PRICE\nTITLE\nLOCATION",
+     the image alt is "TITLE in LOCATION" (it keeps a multi-line title's line break). -->
+<div role="main">
+  <h1>Search results</h1>
+  <div class="grid">
+    <a href="https://www.facebook.com/marketplace/item/1111/?ref=search&referral_code=null&tracking=browse_serp%3A4000d2"
+       aria-label="Solar panel 585 watt Longi, PKR8,000, Karachi, Pakistan, listing 1111">
+      <img alt="Solar panel 585 watt Longi&#10;bullet damaged in Karachi, Pakistan">
+      <span>PKR8,000</span><span>Solar panel 585 watt Longi bullet damaged</span><span>Karachi, Pakistan</span></a>
+
+    <a href="https://www.facebook.com/marketplace/item/2222/?ref=search" aria-label="Solar structure, PKR13,500, Islamabad, Pakistan, listing 2222">
+      <img alt="Solar structure in Islamabad, Pakistan">
+      <span>PKR13,500</span><span>Solar structure</span><span>Islamabad, Pakistan</span></a>
+
+    <a href="https://www.facebook.com/marketplace/item/3333/?ref=search" aria-label="Used solar-panel set, FREE, Lahore, Pakistan, listing 3333">
+      <img alt="Used solar-panel set in Lahore, Pakistan">
+      <span>FREE</span><span>Used solar-panel set</span><span>Lahore, Pakistan</span></a>
+
+    <!-- the same listing again (Facebook repeats results while scrolling) -->
+    <a href="https://www.facebook.com/marketplace/item/1111/?ref=search&tracking=other" aria-label="Solar panel 585 watt Longi, PKR8,000, Karachi, Pakistan, listing 1111">
+      <img alt="Solar panel 585 watt Longi&#10;bullet damaged in Karachi, Pakistan">
+      <span>PKR8,000</span><span>Solar panel 585 watt Longi bullet damaged</span><span>Karachi, Pakistan</span></a>
+  </div>
+</div>
+</body>
+</html>

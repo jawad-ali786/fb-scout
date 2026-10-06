@@ -137,8 +137,9 @@ def parse_relative(text: str | None, now: datetime) -> ParsedTime | None:
     t = _clean(text)
     if len(t) > 60:
         return None
-    if t in ("just now", "now", "a few seconds ago"):
+    if t in ("just now", "now", "a few seconds ago", "just listed"):
         return ParsedTime(now, "minute", "time_text")
+    t = re.sub(r"^(about|over|almost|more than)\s+", "", t)   # Marketplace: "Listed over a week ago"
 
     m = _RELATIVE_RE.match(t)
     if m and m.group(2) in _UNITS:

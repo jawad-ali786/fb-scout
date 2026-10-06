@@ -240,3 +240,125 @@ def test_api_exclude(root):
     assert api.dataset_exclude([item_id], "", str(root))["error"] == "invalid_argument"
     out = api.dataset_exclude([item_id], "not about the brand", str(root))
     assert out["ok"] and out["items_left"] == 0
+
+
+def _labelled_dataset(root):
+    make_run(root, "brand-x", "20261001-100000", [
+        rec("a", text="Brand X inverter stopped working after 2 weeks, worst service, bilkul bekar",
+            post_url="https://www.facebook.com/reel/1/", kind="reel", keyword="Brand X"),
+        rec("b", text="Brand X inverter new stock available, price 75000, contact now",
+            post_url="https://www.facebook.com/reel/2/", kind="reel", keyword="Brand X"),
+        rec("c", text="Comparing Brand X and Brand Y inverters: Y failed twice, X has been perfect",
+            post_url="https://www.facebook.com/reel/3/", kind="reel", keyword="Brand X"),
+    ], keyword="Brand X")
+    make_run(root, "brand-y", "20261001-110000", [
+        rec("c2", text="Comparing Brand X and Brand Y inverters: Y failed twice, X has been perfect",
+            post_url="https://www.facebook.com/reel/3/", kind="reel", keyword="Brand Y"),
+        rec("m", text="Solar inverter 5kW Brand Y", post_url="https://www.facebook.com/marketplace/item/77/?ref=search",
+            kind="marketplace", keyword="Brand Y", price="PKR75,000", location="Karachi, Pakistan"),
+    ], keyword="Brand Y")
+
+
+def test_sentiment_labels(root):
+    _labelled_dataset(root)
+    db = root / "fbscout.sqlite"
+    with Dataset(db) as ds:
+        ds.import_all(root)
+        complaint = next(i for i in ds.items(limit=None) if "worst" in i["text"])["item_id"]
+        ad = next(i for i in ds.items(limit=None) if "new stock" in i["text"])["item_id"]
+        both = next(i for i in ds.items(limit=None) if "Comparing" in i["text"])["item_id"]
+        listing = next(i for i in ds.items(limit=None) if i["kind"] == "marketplace")["item_id"]
+
+        queue = ds.label_queue(limit=50)
+        assert queue["remaining"] == 5                              # the comparison needs a label per keyword
+        assert {(q["item_id"], q["keyword"]) for q in queue["to_label"]} >= {(both, "Brand X"), (both, "Brand Y")}
+        assert ds.label_queue(run_id="brand-x_20261001-100000")["remaining"] == 3
+
+        result = ds.label_items([
+            {"item_id": complaint, "sentiment": "negative", "reason": "'worst service', 'bilkul bekar'"},
+            {"item_id": ad, "sentiment": "Neutral", "reason": "sale ad"},
+            {"item_id": both, "sentiment": "positive", "keyword": "brand x", "reason": "X has been perfect"},
+            {"item_id": both, "sentiment": "negative", "keyword": "Brand Y", "reason": "Y failed twice"},
+            {"item_id": both, "sentiment": "negative"},                          # which keyword?
+            {"item_id": listing, "sentiment": "angry"},                          # not a label
+            {"item_id": "i_nope", "sentiment": "negative"},
+        ])
+        assert result["labeled"] == 4 and len(result["errors"]) == 3
+        assert ds.label_queue()["remaining"] == 1                   # only the listing is left
+
+        negatives_x = ds.items(keyword="Brand X", sentiment="negative")
+        assert [i["item_id"] for i in negatives_x] == [complaint]
+        assert negatives_x[0]["sentiment"] == "negative" and "bekar" in negatives_x[0]["sentiment_reason"]
+        assert {i["item_id"] for i in ds.items(sentiment="negative")} == {complaint, both}
+        assert [i["item_id"] for i in ds.items(keyword="Brand Y", sentiment="negative")] == [both]
+        mixed = next(i for i in ds.items(limit=None) if i["item_id"] == both)
+        assert mixed["sentiment"] == "Brand X: positive | Brand Y: negative"
+
+        stats = ds.stats(keyword="Brand X")
+        assert stats["by_sentiment"] == {"negative": 1, "neutral": 1, "positive": 1} and stats["not_labeled"] == 0
+        assert ds.stats()["not_labeled"] == 1
+        assert ds.count(kind="marketplace", contains="PKR75") == 1
+
+        out = export_items(ds, root / "neg.csv", "csv", sentiment="negative", keyword="Brand X")
+        rows = list(csv.DictReader((root / "neg.csv").open(encoding="utf-8-sig")))
+        assert out["rows"] == 1 and rows[0]["sentiment"] == "negative" and "price" in rows[0]
+
+    saved = json.loads((root / "labels.json").read_text(encoding="utf-8"))["labels"]
+    assert len(saved) == 4 and all(e["refs"] for e in saved)
+
+    db.unlink()                                                     # rebuilt from the run folders
+    with Dataset(db) as ds:
+        ds.import_all(root)
+        assert ds.stats()["by_sentiment"] == {"negative": 2, "neutral": 1, "positive": 1}
+        ds.exclude_items([complaint], "test")                       # removing an item drops its label
+        assert ds.count(sentiment="negative", keyword="Brand X") == 0
+
+
+def test_old_dataset_file_gets_new_columns(tmp_path):
+    import sqlite3
+    db = tmp_path / "fbscout.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE items (item_id TEXT PRIMARY KEY, url_key TEXT UNIQUE, content_key TEXT, kind TEXT, "
+                "post_url TEXT, comment_url TEXT, parent_post_url TEXT, author_name TEXT, author_url TEXT, "
+                "group_name TEXT, group_url TEXT, text TEXT, image_text TEXT, time_text TEXT, time_exact TEXT, "
+                "posted_at TEXT, posted_date TEXT, posted_at_precision TEXT, posted_at_source TEXT, language TEXT, "
+                "screenshot_path TEXT, first_seen TEXT, last_seen TEXT, times_seen INTEGER NOT NULL DEFAULT 0, "
+                "first_run_id TEXT, last_run_id TEXT)")
+    con.commit()
+    con.close()
+    with Dataset(db) as ds:
+        cols = {r[1] for r in ds.conn.execute("PRAGMA table_info(items)")}
+        assert {"price", "location", "condition"} <= cols
+        assert ds.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "2"
+
+
+def test_profile_cards_dedupe_by_profile():
+    a = rec("a", kind="profile", post_url="https://www.facebook.com/solarpanel.ali/?__tn__=x", text="Ali")
+    b = rec("b", kind="profile", author_url="https://www.facebook.com/solarpanel.ali", text="Ali (Solar Panel expert)")
+    assert url_key(a) == url_key(b) and url_key(a).startswith("profile:")
+
+
+def test_api_labels_and_only_negative_next_step(root, monkeypatch):
+    import asyncio
+    from fbscout.scraper import SearchOptions
+
+    run_dir = make_run(root, "brand-x", "20261001-100000", [
+        rec("a", text="Brand X inverter is bekar, stopped working", post_url="https://www.facebook.com/reel/1/",
+            kind="reel", keyword="Brand X")], keyword="Brand X")
+
+    async def fake_run_search(opts, progress=None):
+        return {"ok": True, "status": "completed", "run_id": "brand-x_20261001-100000", "run_dir": str(run_dir)}
+
+    monkeypatch.setattr(api, "run_search", fake_run_search)
+    result = asyncio.run(api._search_and_import(SearchOptions(keyword="Brand X", output_dir=str(root), only_negative=True)))
+    assert "fb_label_queue" in result["next_step"] and "brand-x_20261001-100000" in result["next_step"]
+    plain = asyncio.run(api._search_and_import(SearchOptions(keyword="Brand X", output_dir=str(root))))
+    assert "next_step" not in plain
+
+    queue = api.label_queue(str(root), run_id="brand-x_20261001-100000")
+    assert queue["remaining"] == 1 and queue["to_label"][0]["screenshot_file"].endswith("a.png")
+    item_id = queue["to_label"][0]["item_id"]
+    assert not api.label_items([{"item_id": item_id, "sentiment": "bad"}], str(root))["ok"]
+    assert api.label_items([{"item_id": item_id, "sentiment": "negative", "reason": "bekar"}], str(root))["ok"]
+    negatives = api.dataset_items(str(root), run_id="brand-x_20261001-100000", sentiment="negative")
+    assert negatives["total"] == 1 and negatives["items"][0]["sentiment_reason"] == "bekar"

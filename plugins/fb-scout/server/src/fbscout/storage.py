@@ -117,10 +117,12 @@ class RunWriter:
         """Compact view for the agent (no full post text)."""
         compact_keys = (
             "kind", "keyword_verified", "matched_in", "match_snippet", "post_url", "comment_url",
-            "author_name", "group_name", "time_text", "time_exact", "posted_date", "language", "screenshot_name",
+            "author_name", "group_name", "time_text", "time_exact", "posted_date", "language", "price", "location",
+            "screenshot_name",
         )
         return {
             "ok": self.meta["status"] == "completed",
+            "run_id": self.meta["run_id"],
             "status": self.meta["status"],
             "error": self.meta["error"],
             "run_dir": str(self.dir),

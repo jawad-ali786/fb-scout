@@ -24,11 +24,13 @@ from .extract import (
     DOM_SUMMARY_JS, END_OF_RESULTS_JS, FIND_COMMENTS_JS, FIND_POSTS_JS, MORE_COMMENTS_JS,
     RESULTS_READY_JS, SAFE_HTML_JS, Extracted, extract_comment, extract_post, find_handles, find_post_scope,
     group_name_from_title, hover_time_exact, mark_seen, open_comments, show_all_comments,
+    FIND_LISTINGS_JS, LISTING_CARD_JS, LISTING_PAGE_JS, LISTINGS_READY_JS, SEE_MORE_JS, SEE_MORE_LABELS,
+    parse_listing_card, parse_listing_page,
 )
 from .lang import detect_language
 from .matching import MODES, MatchResult, clean_keyword, match_keyword, terms_for
 from .storage import RunWriter, record_id, utc_now_iso
-from .urls import build_search_url, group_root
+from .urls import build_marketplace_url, build_search_url, group_root
 
 log = logging.getLogger("fbscout")
 
@@ -37,6 +39,7 @@ Progress = Callable[[str, int, int], Awaitable[None]] | None
 MAX_RESULTS_CAP = 100
 MAX_COMMENTS_PER_POST = 20
 MAX_COMMENT_EXPAND_CLICKS = 15
+SOURCES = ("posts", "marketplace")
 
 BROWSER_TZ_JS = "() => ({tz: Intl.DateTimeFormat().resolvedOptions().timeZone, offset: -new Date().getTimezoneOffset()})"
 
@@ -56,6 +59,11 @@ class SearchOptions:
     max_minutes: float = 10.0
     blur_names: bool = False   # blur people's/pages' names and profile pictures in screenshots
     batch_id: str | None = None
+    source: str = "posts"                    # "posts" (global or group_url) or "marketplace"
+    marketplace_location: str | None = None  # Marketplace city ("karachi") or location id; default: near the account
+    listing_details: bool = False            # open each kept listing for description, seller, condition, date
+    include_name_matches: bool = False       # also keep keyword-only-in-a-name posts and profile/member cards
+    only_negative: bool = False              # the user wants negative posts only: label, then report negatives
 
     def normalized(self) -> "SearchOptions":
         kw = clean_keyword(self.keyword)
@@ -63,6 +71,10 @@ class SearchOptions:
             raise ValueError("keyword is empty")
         if self.match_mode not in MODES:
             raise ValueError(f"match_mode must be one of {MODES}")
+        if self.source not in SOURCES:
+            raise ValueError(f"source must be one of {SOURCES}")
+        if self.group_url and self.source == "marketplace":
+            raise ValueError("group_url can't be combined with source 'marketplace'")
         if self.group_url and not group_root(self.group_url):
             raise ValueError(f"group_url is not a Facebook group URL: {self.group_url!r}")
         return SearchOptions(
@@ -79,7 +91,18 @@ class SearchOptions:
             max_minutes=max(1.0, min(60.0, float(self.max_minutes))),
             blur_names=bool(self.blur_names),
             batch_id=self.batch_id,
+            source=self.source,
+            marketplace_location=(self.marketplace_location or "").strip() or None,
+            listing_details=bool(self.listing_details),
+            include_name_matches=bool(self.include_name_matches),
+            only_negative=bool(self.only_negative),
         )
+
+    @property
+    def scope(self) -> str:
+        if self.source == "marketplace":
+            return "search:marketplace"
+        return "search:group" if self.group_url else "search:posts"
 
 
 async def pause(lo: float, hi: float) -> None:
@@ -104,6 +127,10 @@ def _verify(opts: SearchOptions, data: Extracted) -> tuple[MatchResult, str | No
     m_img = match_keyword(opts.keyword, data.image_text, opts.match_mode)
     if m_img.ok:
         return m_img, "image_text"
+    if opts.include_name_matches:   # only in the author's / page's / group's name
+        m_name = match_keyword(opts.keyword, data.name_text, opts.match_mode)
+        if m_name.ok:
+            return m_name, "name"
     return m, None
 
 
@@ -133,6 +160,9 @@ def _record(*, rid: str, opts: SearchOptions, data: Extracted, match: MatchResul
         "text": data.text,
         "image_text": data.image_text,
         "language": detect_language(data.text),
+        "price": None,          # Marketplace listings only
+        "location": None,
+        "condition": None,
         "screenshot_name": shot_name,
         "screenshot_path": f"screenshots/{shot_name}" if shot_name else None,
         "source": source,
@@ -153,9 +183,9 @@ async def _screenshot(page: Page, el, run: RunWriter, rank: int, kind: str, rid:
     return name
 
 
-async def wait_for_results(page: Page, run: RunWriter) -> None:
+async def wait_for_results(page: Page, run: RunWriter, ready_js: str = RESULTS_READY_JS) -> None:
     try:
-        await page.wait_for_function(RESULTS_READY_JS, timeout=25000)
+        await page.wait_for_function(ready_js, timeout=25000)
     except PlaywrightError:
         run.warn("Search results did not appear within 25s.")
     await pause(1.5, 2.5)
@@ -164,7 +194,7 @@ async def wait_for_results(page: Page, run: RunWriter) -> None:
 async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadline: float, progress: Progress = None) -> list[dict]:
     """Process the posts on the current (already loaded) search/feed page."""
     terms = terms_for(opts.keyword, opts.match_mode)
-    source = "search:group" if opts.group_url else "search:posts"
+    source = opts.scope
     start_url = page.url
     saved: list[dict] = []
     seen: set[str] = set()
@@ -198,8 +228,10 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
                 break
 
             if not data.is_post:   # a person/page card (e.g. matching group members), not a post
-                run.stats["skipped_not_posts"] = run.stats.get("skipped_not_posts", 0) + 1
-                continue
+                if not opts.include_name_matches:
+                    run.stats["skipped_not_posts"] = run.stats.get("skipped_not_posts", 0) + 1
+                    continue
+                data.kind, data.post_url = "profile", data.author_url
             key = data.post_url or _text_key(data.text)
             if key in seen:
                 continue
@@ -209,6 +241,8 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
             run.stats["candidates_seen"] += 1
 
             match, matched_in = _verify(opts, data)
+            if data.kind == "profile" and matched_in:
+                matched_in = "profile"
             if match.ok:
                 run.stats["verified"] += 1
             elif not opts.save_unverified:
@@ -217,7 +251,7 @@ async def collect_posts(page: Page, opts: SearchOptions, run: RunWriter, deadlin
             rid = record_id(key)
             kind = "group_post" if opts.group_url and data.kind in ("post", "unknown") else data.kind
             shot = await _screenshot(page, el, run, rank, kind, rid, terms, opts)
-            if not data.post_url:
+            if not data.post_url and kind != "profile":
                 run.warn("Some records have no post_url (Facebook did not expose a permalink).")
             record = _record(rid=rid, opts=opts, data=data, match=match, matched_in=matched_in, kind=kind,
                              source=source, rank=rank, shot_name=shot, post_url=data.post_url, run=run,
@@ -323,6 +357,110 @@ async def collect_comments(session: Session, posts: list[dict], opts: SearchOpti
         await page.close()
 
 
+async def collect_listings(page: Page, opts: SearchOptions, run: RunWriter, deadline: float,
+                           progress: Progress = None) -> list[dict]:
+    """Marketplace search results: keep listings whose title contains the keyword."""
+    terms = terms_for(opts.keyword, opts.match_mode)
+    saved: list[dict] = []
+    seen: set[str] = set()
+    rank = idle_rounds = 0
+    for _ in range(min(60, max(8, opts.max_results * 2))):
+        if time.monotonic() > deadline:
+            run.warn(f"Time budget of {opts.max_minutes:g} min reached.")
+            break
+        new_this_round = 0
+        for el in await find_handles(page, FIND_LISTINGS_JS):
+            if len(saved) >= opts.max_results or time.monotonic() > deadline:
+                break
+            if not await mark_seen(el):
+                continue
+            try:
+                listing = parse_listing_card(await el.evaluate(LISTING_CARD_JS))
+            except PlaywrightError:
+                run.stats["errors"] += 1
+                continue
+            key = listing.url or _text_key(listing.title)
+            if key in seen:
+                continue
+            seen.add(key)
+            rank += 1
+            new_this_round += 1
+            run.stats["candidates_seen"] += 1
+            match = match_keyword(opts.keyword, listing.title, opts.match_mode)
+            if match.ok:
+                run.stats["verified"] += 1
+            elif not opts.save_unverified:
+                continue
+            rid = record_id(key)
+            shot = await _screenshot(page, el, run, rank, "marketplace", rid, terms, opts)
+            data = Extracted(text=listing.title, full_text=listing.title, post_url=listing.url, kind="marketplace")
+            record = _record(rid=rid, opts=opts, data=data, match=match, matched_in="title" if match.ok else None,
+                             kind="marketplace", source=opts.scope, rank=rank, shot_name=shot,
+                             post_url=listing.url, run=run)
+            record.update(price=listing.price, location=listing.location)
+            run.add(record)
+            saved.append(record)
+            if progress:
+                await progress(f"saved {len(saved)}/{opts.max_results}", len(saved), opts.max_results)
+            await pause(0.3, 0.8)
+        if len(saved) >= opts.max_results:
+            break
+        idle_rounds = idle_rounds + 1 if new_this_round == 0 else 0
+        if idle_rounds >= 3:
+            break
+        await page.mouse.move(640, 450)
+        await page.mouse.wheel(0, random.randint(1200, 1900))
+        await pause(1.8, 3.4)
+        await check_page(page)
+    return saved
+
+
+async def collect_listing_details(session: Session, listings: list[dict], run: RunWriter, deadline: float,
+                                  progress: Progress = None) -> None:
+    """Open each saved listing for its description, condition, seller and listing date."""
+    page = await session.context.new_page()
+    try:
+        await fill_listing_details(page, listings, run, deadline, progress)
+    finally:
+        await page.close()
+
+
+async def fill_listing_details(page: Page, listings: list[dict], run: RunWriter, deadline: float,
+                               progress: Progress = None) -> None:
+    offset = run.meta.get("browser_utc_offset_minutes")
+    targets = [r for r in listings if r.get("post_url")]
+    for i, rec in enumerate(targets):
+        if time.monotonic() > deadline:
+            run.warn("Time budget reached while opening listings; some have no details.")
+            break
+        await page.goto(rec["post_url"], wait_until="domcontentloaded", timeout=45000)
+        await check_page(page)
+        await pause(2.0, 3.5)
+        try:
+            main = await page.query_selector('[role="main"]')
+            if main:
+                await main.evaluate(SEE_MORE_JS, SEE_MORE_LABELS)
+            details = parse_listing_page(await page.evaluate(LISTING_PAGE_JS))
+        except PlaywrightError as exc:
+            run.stats["errors"] += 1
+            run.warn(f"Could not read a listing page: {str(exc).splitlines()[0][:120]}")
+            continue
+        if details.get("description"):
+            rec["text"] = rec["text"] + "\n\n" + details["description"]
+            rec["language"] = detect_language(rec["text"])
+        rec["condition"] = details.get("condition")
+        rec["location"] = rec.get("location") or details.get("location")   # the card's is more precise
+        rec["author_name"], rec["author_url"] = details.get("seller_name"), details.get("seller_url")
+        if details.get("listed_text"):
+            rec["time_text"] = details["listed_text"]
+            rec.update(resolve(None, rec["time_text"], rec["captured_at"], offset))
+        run.stats["listings_opened"] = run.stats.get("listings_opened", 0) + 1
+        run.flush()
+        if progress:
+            await progress(f"listing details {i + 1}/{len(targets)}", i + 1, len(targets))
+        await pause(2.0, 4.0)
+
+
 async def dump_debug(page: Page, run: RunWriter, reason: str) -> None:
     """Save what the page looked like, to fix selectors. Scripts (session tokens) are stripped."""
     d = run.debug_dir()
@@ -347,7 +485,7 @@ async def run_search(opts: SearchOptions, progress: Progress = None) -> dict:
             if not await is_logged_in(session.context):
                 raise NotLoggedIn()
             params = {k: v for k, v in asdict(opts).items() if k not in ("keyword", "output_dir")}
-            params["scope"] = "search:group" if opts.group_url else "search:posts"
+            params["scope"] = opts.scope
             params["browser"] = session.channel
             run = RunWriter(output_root, opts.keyword, params)
             page = await session.page()
@@ -359,19 +497,34 @@ async def run_search(opts: SearchOptions, progress: Progress = None) -> dict:
             except PlaywrightError:
                 pass
             try:
-                url = build_search_url(opts.keyword, opts.group_url)
+                if opts.source == "marketplace":
+                    url = build_marketplace_url(opts.keyword, opts.marketplace_location)
+                else:
+                    url = build_search_url(opts.keyword, opts.group_url)
                 run.meta["search_url"] = url
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 await check_page(page)
-                await wait_for_results(page, run)
-                if opts.group_url:  # results inside a group don't repeat the group's name
-                    run.meta["group_name"] = group_name_from_title(await page.title())
-                posts = await collect_posts(page, opts, run, deadline, progress)
-                if run.stats["candidates_seen"] == 0:
-                    run.warn("No posts were found on the results page.")
-                    await dump_debug(page, run, "no_candidates")
-                if opts.include_comments and posts:
-                    await collect_comments(session, posts, opts, run, deadline, progress)
+                if opts.source == "marketplace":
+                    await wait_for_results(page, run, LISTINGS_READY_JS)
+                    run.meta["marketplace_url"] = page.url   # Facebook adds the location it searched in
+                    listings = await collect_listings(page, opts, run, deadline, progress)
+                    if run.stats["candidates_seen"] == 0:
+                        run.warn("No listings were found on the Marketplace results page.")
+                        await dump_debug(page, run, "no_candidates")
+                    if opts.listing_details and listings:
+                        await collect_listing_details(session, listings, run, deadline, progress)
+                    if opts.include_comments:
+                        run.warn("Marketplace listings have no comments; include_comments was ignored.")
+                else:
+                    await wait_for_results(page, run)
+                    if opts.group_url:  # results inside a group don't repeat the group's name
+                        run.meta["group_name"] = group_name_from_title(await page.title())
+                    posts = await collect_posts(page, opts, run, deadline, progress)
+                    if run.stats["candidates_seen"] == 0:
+                        run.warn("No posts were found on the results page.")
+                        await dump_debug(page, run, "no_candidates")
+                    if opts.include_comments and posts:
+                        await collect_comments(session, posts, opts, run, deadline, progress)
                 status = "completed"
             except FBScoutError as exc:
                 status, error = "stopped", {"code": exc.code, "message": str(exc), "hint": exc.hint}

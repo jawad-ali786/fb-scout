@@ -45,6 +45,9 @@ def test_parse_exact_rejects(text):
     ("28 September at 16:12", datetime(2026, 9, 28, 16, 12, tzinfo=PKT), "minute"),
     ("December 30", datetime(2025, 12, 30, tzinfo=PKT), "day"),                    # no year: last year
     ("March 3, 2024", datetime(2024, 3, 3, tzinfo=PKT), "day"),
+    ("over a week ago", NOW - timedelta(weeks=1), "week"),                       # Marketplace "Listed ..."
+    ("about an hour ago", NOW - timedelta(hours=1), "hour"),
+    ("Just listed", NOW, "minute"),
 ])
 def test_parse_relative(text, expected, precision):
     p = parse_relative(text, NOW)
