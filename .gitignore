@@ -1,0 +1,16 @@
+# Collected data (may contain personal data, never commit)
+fb-scout-output/
+
+# Browser profile (contains your Facebook login), in case FBSCOUT_HOME points here
+.fbscout/
+profile-*/
+
+# Exported cookie files work like passwords
+*cookies*.txt
+*cookies*.json
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Solar Users Group | Which brand of inverter do you use? | Facebook</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; }
+  [role="main"] { width: 680px; margin: 24px auto; }
+  [role="article"] { background: #fff; border-radius: 8px; padding: 10px 14px; margin: 8px 0; }
+  .hidden { display: none; }
+  [role="tooltip"] { position: absolute; background: #333; color: #fff; padding: 4px 8px; border-radius: 4px; }
+  [role="menu"] { background: #fff; border: 1px solid #ccc; width: 300px; }
+</style>
+</head>
+<body>
+<!-- Like Facebook when a group post link is opened: the home feed is in the background ... -->
+<div role="main">
+  <div role="feed">
+    <div role="article">
+      <h3><a href="https://www.facebook.com/somepage">Some Page</a></h3>
+      <div dir="auto">Decoy feed post: solar panel prices are rising</div>
+      <div role="button" aria-label="Leave a comment" id="decoyopen">34</div>
+      <div id="decoycomments"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ... and the post itself is in a dialog, its comments collapsed; the count opens them. -->
+<div role="dialog">
+  <div role="article">
+    <h3><a href="https://www.facebook.com/groups/123456/">Solar Users Group</a></h3>
+    <div data-ad-preview="message"><div dir="auto">Which brand of inverter do you use? 🤔</div></div>
+    <div role="button" aria-label="Like">12</div>
+    <div role="button" aria-label="Leave a comment" id="opencomments">4</div>
+    <div id="comments"></div>
+  </div>
+</div>
+
+<template id="decoy-tpl">
+  <div role="button">Most relevant</div>
+  <div role="article" aria-label="Comment by Decoy Person 1 hour ago">
+    <a href="https://www.facebook.com/decoy.person">Decoy Person</a>
+    <div dir="auto">Decoy comment about solar panel, must never be collected</div>
+    <a href="https://www.facebook.com/somepage/posts/pfbid0decoy/?comment_id=9999">1h</a>
+  </div>
+  <div role="button">View 2 more comments</div>
+</template>
+
+<template id="comments-tpl">
+  <!-- Comments are sorted "Most relevant"; the menu offers "All comments". -->
+  <div role="button" id="sort">Most relevant</div>
+  <div role="menu" id="sortmenu" class="hidden">
+    <div role="menuitem">Most relevant<br>Show friends' comments and the most engaging comments first.</div>
+    <div role="menuitem" id="allcomments">All comments<br>Show all comments, including potential spam.</div>
+  </div>
+
+  <div role="article" aria-label="Comment by Sara Ahmed 2 hours ago">
+    <a href="https://www.facebook.com/profile.php?id=100200&comment_id=Y29tMQ%3D%3D&__cft__[0]=AZ">Sara Ahmed</a>
+    <div dir="auto">My solar panel stopped working after a month, very bad service.</div>
+    <a href="https://www.facebook.com/groups/123456/posts/789012/?comment_id=1111&__cft__[0]=AZ"
+       data-fake-tip="Friday, October 2, 2026 at 9:15 AM">2h</a>
+    <div role="article" aria-label="Reply by Usman 1 hour ago">
+      <a href="https://www.facebook.com/usman.pk?comment_id=Y29tMg%3D%3D">Usman</a>
+      <div dir="auto">Same here, switching to another brand.</div>
+      <a href="https://www.facebook.com/groups/123456/posts/789012/?comment_id=1111&reply_comment_id=2222&__tn__=R">1h</a>
+    </div>
+  </div>
+
+  <div role="article" aria-label="Comment by Hina 3 hours ago">
+    <a href="https://www.facebook.com/hina.x">Hina</a>
+    <div dir="auto">We use Brand Y inverters, no complaints.</div>
+    <a href="https://www.facebook.com/groups/123456/posts/789012/?comment_id=3333">3h</a>
+  </div>
+
+  <div id="allonly"></div>
+  <div id="more"></div>
+  <div role="button" id="viewmore">View 1 more reply</div>
+</template>
+
+<!-- Only added after switching to "All comments". -->
+<template id="allonly-tpl">
+  <div role="article" aria-label="Comment by Zain 5 hours ago">
+    <a href="https://www.facebook.com/zain.k">Zain</a>
+    <div dir="auto">Cheap solar panel deals, DM me</div>
+    <a href="https://www.facebook.com/groups/123456/posts/789012/?comment_id=5555">5h</a>
+  </div>
+</template>
+
+<!-- Only added after "View 1 more reply". -->
+<template id="more-tpl">
+  <div role="article" aria-label="Reply by Kamran 30 minutes ago">
+    <a href="https://www.facebook.com/kamran.k">Kamran</a>
+    <div dir="auto">Get your solar panel checked by the installer before warranty ends.</div>
+    <a href="https://www.facebook.com/groups/123456/posts/789012/?comment_id=3333&reply_comment_id=4444">30m</a>
+  </div>
+</template>
+
+<script>
+  const add = (target, tpl) => document.getElementById(target).appendChild(document.getElementById(tpl).content.cloneNode(true));
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[id]');
+    if (!el) return;
+    if (el.id === 'opencomments') add('comments', 'comments-tpl');
+    if (el.id === 'decoyopen') add('decoycomments', 'decoy-tpl');
+    if (el.id === 'sort') document.getElementById('sortmenu').classList.remove('hidden');
+    if (el.id === 'allcomments') {
+      document.getElementById('sortmenu').classList.add('hidden');
+      add('allonly', 'allonly-tpl');
+      document.getElementById('sort').textContent = 'All comments';
+    }
+    if (el.id === 'viewmore') { add('more', 'more-tpl'); el.remove(); }
+  });
+  // Timestamp tooltip with the full date, shown after a short delay and lingering (like Facebook).
+  let timer = null;
+  document.addEventListener('mouseover', (e) => {
+    const ts = e.target.closest('a[data-fake-tip]');
+    if (!ts) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const tip = document.createElement('div');
+      tip.setAttribute('role', 'tooltip');
+      tip.textContent = ts.dataset.fakeTip;
+      const r = ts.getBoundingClientRect();
+      tip.style.left = (r.left + window.scrollX) + 'px'; tip.style.top = (r.bottom + window.scrollY + 4) + 'px';
+      document.body.appendChild(tip);
+    }, 300);
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (!e.target.closest('a[data-fake-tip]')) return;
+    clearTimeout(timer);
+    const tips = Array.from(document.querySelectorAll('[role="tooltip"]'));
+    setTimeout(() => tips.forEach(t => t.remove()), 2000);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "fb-scout": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--quiet",
+        "--no-dev",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/server",
+        "fbscout-mcp"
+      ]
+    }
+  }
+}

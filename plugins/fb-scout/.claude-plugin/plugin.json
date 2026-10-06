@@ -1,0 +1,9 @@
+{
+  "name": "fb-scout",
+  "version": "0.2.0",
+  "description": "Search Facebook for a keyword, screenshot every matching post/comment (keyword highlighted) and save results.json with metadata: post URL, kind, author, group, text, screenshot name. Research MVP.",
+  "author": {
+    "name": "Farhan Irfan"
+  },
+  "keywords": ["facebook", "research", "social-listening", "screenshots", "playwright", "mcp"]
+}

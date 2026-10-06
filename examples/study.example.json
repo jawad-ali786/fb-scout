@@ -1,0 +1,16 @@
+{
+  "name": "solar-market",
+  "keywords": ["solar panel", "inverter"],
+  "groups": [
+    "https://www.facebook.com/groups/REPLACE-WITH-GROUP-ID-1/",
+    "https://www.facebook.com/groups/REPLACE-WITH-GROUP-ID-2/"
+  ],
+  "include_global": true,
+  "max_results": 15,
+  "match_mode": "phrase",
+  "include_comments": false,
+  "max_comment_posts": 5,
+  "max_minutes_per_search": 10,
+  "pause_seconds": [60, 180],
+  "blur_names": false
+}

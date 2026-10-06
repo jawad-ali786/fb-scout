@@ -1,0 +1,17 @@
+{
+  "name": "fb-scout-marketplace",
+  "owner": {
+    "name": "Farhan Irfan"
+  },
+  "metadata": {
+    "description": "FB Scout: Facebook keyword research plugin (search, screenshots, JSON metadata)."
+  },
+  "plugins": [
+    {
+      "name": "fb-scout",
+      "source": "./plugins/fb-scout",
+      "description": "Search Facebook for a keyword, screenshot matching posts/comments and save results.json with metadata.",
+      "version": "0.2.0"
+    }
+  ]
+}

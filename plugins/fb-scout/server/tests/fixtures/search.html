@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fake Facebook search page (offline test fixture)</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; }
+  [role="banner"] { position: fixed; top: 0; left: 0; right: 0; height: 56px; background: #fff; box-shadow: 0 1px 2px #0003; z-index: 10; }
+  [role="main"] { width: 680px; margin: 72px auto; }
+  [role="article"] { background: #fff; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+  .hidden { display: none; }
+  [role="tooltip"] { position: absolute; background: #333; color: #fff; padding: 4px 8px; border-radius: 4px; }
+  img { width: 100%; height: 120px; background: #ddd; display: block; }
+</style>
+</head>
+<body>
+<div role="banner">facebook (fixed top bar)</div>
+<div role="main">
+  <div role="feed">
+
+    <!-- 1: group post; timestamp is a "?__cft__" placeholder until hovered (like Facebook);
+         long text behind "See more", which turns into "See less"; photo link with an image description -->
+    <div><div role="article" aria-posinset="1">
+      <h3><a href="https://www.facebook.com/groups/123456/?__cft__[0]=AZ1&__tn__=-UC">Solar Users Group</a></h3>
+      <div><a href="https://www.facebook.com/groups/123456/user/1000123/?__cft__[0]=AZ2">Ali Khan</a> ·
+        <a href="?__cft__[0]=AZ0&__tn__=%2CO%2CP-R"
+           data-fake-href="https://www.facebook.com/groups/123456/posts/789012/?__cft__[0]=AZX&__tn__=%2CO%2CP-R"
+           data-fake-tip="Sunday, September 28, 2026 at 4:12 PM">3d</a></div>
+      <div data-ad-preview="message"><div dir="auto">Anyone know a good solar panel installer near Lahore?<span class="hidden" id="more1"> Budget is 500k. Thanks!</span></div>
+        <div role="button" id="seemore1">See more</div></div>
+      <a href="https://www.facebook.com/photo/?fbid=55&set=gm.789012&__cft__[0]=AZ9" aria-label="May be an image of text"><img alt="May be an image of text"></a>
+      <a href="?__cft__[0]=AZ0" style="position:absolute;width:0;height:0;overflow:hidden">hidden junk link</a>
+      <div role="button">Like</div><div role="button">Comment</div>
+      <div role="article" aria-label="Comment by Sara Ahmed 2 hours ago"><div dir="auto">solar panel comment preview</div></div>
+    </div></div>
+
+    <!-- 2: page post with tracking params already in the href -->
+    <div><div role="article" aria-posinset="2">
+      <h3><a href="https://www.facebook.com/SolarCo?__tn__=-UC">SolarCo</a></h3>
+      <a href="https://www.facebook.com/SolarCo/posts/pfbid02abc?__cft__[0]=AZ3&__tn__=%2CO%2CP-R">1h</a>
+      <div data-ad-comet-preview="message"><div dir="auto">New Solar Panel range launched today. <a href="https://www.facebook.com/hashtag/solar">#solar</a></div></div>
+      <img alt="">
+    </div></div>
+
+    <!-- 3: fuzzy result Facebook would return, but the phrase is not there -->
+    <div><div role="article" aria-posinset="3">
+      <h3><a href="https://www.facebook.com/bilal.r">Bilal R</a></h3>
+      <a href="https://www.facebook.com/bilal.r/posts/pfbid03def">5h</a>
+      <div data-ad-preview="message"><div dir="auto">Thinking about panels for solar energy at home, any advice?</div></div>
+    </div></div>
+
+    <!-- 4: reel with a hashtag (no phrase match) -->
+    <div><div role="article" aria-posinset="4">
+      <h3><a href="https://www.facebook.com/cleanpro">CleanPro</a></h3>
+      <a href="https://www.facebook.com/reel/987654321/?s=fb_shorts_tab">Reel</a>
+      <div dir="auto">#solarpanel cleaning tips for summer, watch till the end</div>
+    </div></div>
+
+    <!-- 5: duplicate of #2 (Facebook sometimes repeats results) -->
+    <div><div role="article" aria-posinset="5">
+      <h3><a href="https://www.facebook.com/SolarCo">SolarCo</a></h3>
+      <a href="https://www.facebook.com/SolarCo/posts/pfbid02abc?__cft__[0]=OTHER">1h</a>
+      <div data-ad-comet-preview="message"><div dir="auto">New Solar Panel range launched today.</div></div>
+    </div></div>
+
+    <!-- 6: video post; the only permalink is the timestamp placeholder (empty text), revealed as a reel on hover;
+         profile-picture link with an image comes before the name -->
+    <div><div role="article" aria-posinset="6">
+      <a href="https://www.facebook.com/kamalsolar" aria-label="Kamal Solar, view story"><svg width="40" height="40"><image width="40" height="40"></image></svg><span>Online status indicator</span></a>
+      <h3><a href="https://www.facebook.com/kamalsolar">Kamal Solar</a></h3>
+      <a href="?__cft__[0]=AZ6" style="display:inline-block;width:58px;height:16px"
+         data-fake-href="https://www.facebook.com/reel/111222/?__cft__[0]=AZ6&s=fb_shorts_tab"
+         data-fake-tip="Monday 10 August 2026 at 14:15"><span><span></span></span></a>
+      <div data-ad-preview="message"><div dir="auto">Tiger Neo 645W solar panel in stock now</div></div>
+      <video width="320" height="120"></video>
+    </div></div>
+
+    <!-- 7: group photo post; hovering the timestamp reveals nothing, so the group post URL comes from the photo link;
+         avatar link whose only text is an accessibility label; hidden "Facebook" filler inside the message -->
+    <div><div role="article" aria-posinset="7">
+      <h3><a href="https://www.facebook.com/groups/123456/">Solar Users Group</a></h3>
+      <div><a href="https://www.facebook.com/groups/123456/user/1000555/">Online status indicator<br>Active</a>
+        <a href="https://www.facebook.com/groups/123456/user/1000555/">Sana Traders</a> ·
+        <a href="?__cft__[0]=AZ7" style="display:inline-block;width:58px;height:16px"><span></span></a></div>
+      <div data-ad-preview="message"><span style="position:absolute;clip:rect(0 0 0 0)">Facebook</span><div dir="auto">Selling solar panel stock in Karachi, wholesale rates</div></div>
+      <a href="https://www.facebook.com/photo/?fbid=999&set=pcb.555666&__cft__[0]=Q" aria-label="May be an image of text"><img alt="May be an image of text"></a>
+    </div></div>
+
+    <!-- 8: the keyword is only in the poster; Facebook's image description has the poster's text.
+         Emoji are images too (short alt), and must not end up in image_text. -->
+    <div><div role="article" aria-posinset="8">
+      <h3><a href="https://www.facebook.com/sunpower.pk">SunPower PK</a></h3>
+      <a href="https://www.facebook.com/sunpower.pk/posts/pfbid04ghi">2d</a>
+      <div data-ad-preview="message"><div dir="auto">Big sale this weekend only! <img alt="🔥" style="width:16px;height:16px;display:inline"></div></div>
+      <a href="https://www.facebook.com/photo/?fbid=777&set=a.1"><img alt="May be an image of text that says 'SOLAR PANEL SALE 20% OFF'"></a>
+    </div></div>
+
+    <!-- 9: the keyword is only in the GROUP's name; the post itself doesn't mention it -->
+    <div><div role="article" aria-posinset="9">
+      <h3><a href="https://www.facebook.com/groups/777/">All type solar panel sale purchase</a> · <span role="button">Join</span></h3>
+      <a href="https://www.facebook.com/groups/777/user/55/">Bilal Traders</a>
+      <a href="https://www.facebook.com/groups/777/posts/888/">1d</a>
+      <div data-ad-preview="message"><div dir="auto">FOR SALE: lithium battery 5kWh, 5 years warranty</div></div>
+    </div></div>
+
+    <!-- 10: the keyword is only in a comment preview under the post -->
+    <div><div role="article" aria-posinset="10">
+      <h3><a href="https://www.facebook.com/powerhouse.pk">PowerHouse PK</a></h3>
+      <a href="https://www.facebook.com/powerhouse.pk/posts/pfbid05jkl">4h</a>
+      <div data-ad-preview="message"><div dir="auto">Our new hybrid inverter range is here, order now</div></div>
+      <div role="article" aria-label="Comment by Sana 1 hour ago"><div dir="auto">Do you also sell solar panel stands?</div></div>
+    </div></div>
+
+    <!-- A member card (search inside a group lists matching people first): not a post -->
+    <div><div role="article">
+      <a href="https://www.facebook.com/solarpanel.ali">Ali (Solar Panel expert)</a>
+      <span>@solarpanel.ali · Lives in Lahore · 32 followers</span>
+      <div role="button">Add friend</div>
+    </div></div>
+
+    <!-- 11: buy/sell post; the keyword is in the sale listing's title, outside the message -->
+    <div><div role="article" aria-posinset="11">
+      <h3><a href="https://www.facebook.com/nomvelo.k">Nomvelo K</a></h3>
+      <a href="https://www.facebook.com/groups/999/posts/1234/">2d</a>
+      <div data-ad-preview="message"><div dir="auto">Unit is in perfect condition, collection only</div></div>
+      <div><span>ZAR2,999 · BOKSBURG</span><div><span>24v solar panel kit with mppt controller, as new!</span></div>
+        <div role="button">Message</div></div>
+    </div></div>
+
+  </div>
+  <div>End of results</div>
+</div>
+<script>
+  // Like Facebook: the timestamp gets its real href on hover and shows the full date in a tooltip,
+  // which appears after a short delay and lingers for a while after the mouse leaves.
+  for (const ts of document.querySelectorAll('a[data-fake-href]')) {
+    let timer = null;
+    ts.addEventListener('mouseover', () => {
+      ts.setAttribute('href', ts.dataset.fakeHref);
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const tip = document.createElement('div');
+        tip.setAttribute('role', 'tooltip');
+        tip.textContent = ts.dataset.fakeTip;
+        const r = ts.getBoundingClientRect();
+        tip.style.left = (r.left + window.scrollX) + 'px'; tip.style.top = (r.bottom + window.scrollY + 4) + 'px';
+        document.body.appendChild(tip);
+      }, 300);
+    });
+    ts.addEventListener('mouseout', () => {
+      clearTimeout(timer);
+      const tips = Array.from(document.querySelectorAll('[role="tooltip"]'));
+      setTimeout(() => tips.forEach(t => t.remove()), 2000);
+    });
+  }
+  document.getElementById('seemore1').addEventListener('click', (e) => {
+    document.getElementById('more1').classList.remove('hidden');
+    e.currentTarget.textContent = 'See less';
+  });
+</script>
+</body>
+</html>
