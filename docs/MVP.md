@@ -144,6 +144,8 @@ fb-scout-output/
 Status after the live test on 2026-10-06 (see [PLAN.md §9](PLAN.md#9-how-success-is-measured)):
 
 - [ ] A fresh machine with Claude Code + uv + Chrome can install the plugin and run a search with no manual Python setup
+  (partly checked: a clean clone from GitHub with an empty uv cache installs in ~15 s, all tests pass and the MCP server
+  starts with its 9 tools; still to do: `/plugin marketplace add jawad-ali786/fb-scout` + a search on a second computer)
 - [x] Login is needed only once; later runs reuse the session
 - [x] For a common keyword, the run saves up to `max_results` verified matches (10/10 in all 10 test runs)
 - [x] Every saved record has `kind`, `screenshot_name`, and `post_url` (or a warning explaining why the URL is missing)
