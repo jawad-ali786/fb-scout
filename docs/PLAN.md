@@ -216,9 +216,16 @@ as posts. Still open: installing from GitHub on a second machine with Claude Cod
   `listing_details` also description, seller, condition and listing date
 - ✅ `include_name_matches`: optionally keep posts whose keyword is only in a name, and profile cards
 - ✅ **Negative only**: Claude labels results negative / neutral / positive with a reason
-  ([SENTIMENT.md](SENTIMENT.md)); the first part of Phase 3's "LLM classification"
+  ([ANALYSIS.md](ANALYSIS.md)); the first part of Phase 3's "LLM classification"
 
-### Phase 3: Sentiment and brand analysis
+### Phase 3: Sentiment and brand analysis ✅ (v0.4, see [ANALYSIS.md](ANALYSIS.md))
+Built: one rubric (version 2) and JSON schema for sentiment, aspects, churn and feedback type;
+four methods stored side by side (human annotators, Claude API, agent, local XLM-R model);
+gold-set sheets, Cohen's kappa, adjudication, and evaluation reports (precision / recall / F1,
+confusion matrices). Still to do by the research team: label the gold set (2 annotators) and run
+the comparison on it.
+
+Plan:
 - **Sentiment** (positive / negative / neutral) per record
 - **Aspect-based sentiment**: price, quality, delivery, customer service, etc.
 - **Churn intent detection**: "switching to", "cancel", "never buying again",

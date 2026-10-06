@@ -16,13 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import anonymization_salt
-from .dataset import Dataset
+from .dataset import Dataset, format_aspects
 from .storage import slugify
 
 FORMATS = ("csv", "jsonl", "parquet")
 
 COLUMNS = [
-    "item_id", "kind", "keywords", "sentiment", "sentiment_reason", "language", "posted_at", "posted_date",
+    "item_id", "kind", "keywords", "sentiment", "sentiment_reason", "aspects", "churn", "churn_target",
+    "feedback_type", "label_method", "language", "posted_at", "posted_date",
     "posted_at_precision", "author_name", "author_url", "group_name", "group_url", "post_url", "comment_url",
     "parent_post_url", "text", "image_text", "price", "location", "condition", "time_text", "time_exact",
     "first_seen", "last_seen", "times_seen", "screenshot_path", "first_run_id",
@@ -64,7 +65,9 @@ def export_items(ds: Dataset, path: Path | str, fmt: str = "csv", anonymize: boo
             w = csv.DictWriter(f, fieldnames=columns)
             w.writeheader()
             for r in out:
-                w.writerow({**r, "keywords": " | ".join(r.get("keywords") or [])})
+                aspects = r.get("aspects")
+                w.writerow({**r, "keywords": " | ".join(r.get("keywords") or []),
+                            "aspects": format_aspects(aspects) if isinstance(aspects, list) else aspects})
     elif fmt == "jsonl":
         with path.open("w", encoding="utf-8") as f:
             for r in out:
@@ -76,7 +79,9 @@ def export_items(ds: Dataset, path: Path | str, fmt: str = "csv", anonymize: boo
         except ImportError as exc:
             raise ValueError("Parquet export needs pyarrow: in the server folder run `uv sync --extra parquet`, "
                              "or export as csv/jsonl.") from exc
-        pq.write_table(pa.Table.from_pylist(out), str(path))
+        flat = [{**r, "aspects": format_aspects(r["aspects"]) if isinstance(r.get("aspects"), list)
+                 else r.get("aspects")} for r in out]   # one type per column
+        pq.write_table(pa.Table.from_pylist(flat), str(path))
 
     warnings = []
     if anonymize:

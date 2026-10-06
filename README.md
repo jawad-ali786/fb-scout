@@ -8,7 +8,12 @@ time, text, screenshot name).
 
 It also searches **Marketplace** listings, and can return **only negative posts**:
 Claude reads every result and labels it negative / neutral / positive with a reason
-(see [docs/SENTIMENT.md](docs/SENTIMENT.md)).
+(see [docs/ANALYSIS.md](docs/ANALYSIS.md)).
+
+**Phase 3 analysis** labels every post with sentiment, the aspects people talk about (price,
+quality, service, warranty, …), churn signals and feedback type. It can do this with Claude in
+Claude Code, with the Claude API (fixed and reproducible) or with a local model. It also builds
+a hand-labeled gold set and evaluates the methods (precision, recall, F1, Cohen's kappa).
 
 Every run also goes into one **SQLite dataset** where the same post found by
 several runs is merged. It adds parsed dates, language detection (English / Urdu /
@@ -48,7 +53,7 @@ plugins/fb-scout/
       export.py    CSV / JSONL / Parquet, anonymized exports
       mcp_server.py / cli.py / api.py
     tests/         unit tests + offline browser tests on fake Facebook pages
-docs/PLAN.md, docs/MVP.md, docs/DATASET.md, docs/SENTIMENT.md
+docs/PLAN.md, docs/MVP.md, docs/DATASET.md, docs/ANALYSIS.md
 examples/study.example.json         ← a study file to copy
 ```
 
@@ -97,6 +102,8 @@ In Claude Code:
 /fb-scout:fb-search "Brand X" group=https://www.facebook.com/groups/123456 comments
 /fb-scout:fb-search "Brand X problem" match=all negative
 /fb-scout:fb-search "solar panel" marketplace city=karachi details
+/fb-scout:fb-analyze Inverex
+/fb-scout:fb-analyze evaluate
 /fb-scout:fb-batch examples/study.example.json
 /fb-scout:fb-dataset stats
 /fb-scout:fb-dataset export language=ur,ur-Latn anonymize
@@ -140,7 +147,9 @@ fb-scout-output/<keyword>/<timestamp>/results.json
                                      /screenshots/001_post_3f2a9c1b.png ...
 fb-scout-output/fbscout.sqlite        ← the dataset: all runs, duplicates merged
 fb-scout-output/exclusions.json       ← records left out of the dataset, with reasons
-fb-scout-output/labels.json           ← sentiment labels, restored on rebuild
+fb-scout-output/labels.json           ← labels of every method, restored on rebuild
+fb-scout-output/_gold/                ← labeling sheets for the gold set
+fb-scout-output/_reports/             ← evaluation reports (Markdown + JSON)
 fb-scout-output/_exports/             ← CSV / JSONL / Parquet exports
 fb-scout-output/_batches/             ← study (batch) reports
 ```
@@ -185,6 +194,10 @@ uv run fbscout db exclude i_... --reason "off-topic"   # leave items out (run fo
 uv run fbscout db label i_... --sentiment negative --reason "..."   # label by hand (e.g. a gold set)
 uv run fbscout db export --sentiment negative --keyword "Brand X"    # only the negatives
 uv run fbscout db import                  # runs made before v0.2, or copied from elsewhere
+uv run fbscout analyze --method claude-api --dry-run   # Phase 3: label with the Claude API (needs --extra claude)
+uv run --extra ml fbscout analyze --method model       # Phase 3: local sentiment model (needs --extra ml)
+uv run fbscout gold sample --n 300        # Phase 3: blind sheet for two annotators; then gold import / adjudicate
+uv run fbscout evaluate                   # Phase 3: methods vs the gold set (precision/recall/F1, kappa)
 ```
 
 **Any other MCP client** (Claude Desktop, Cursor, other vendors' agents): add this server:
@@ -211,7 +224,11 @@ uv run fbscout db import                  # runs made before v0.2, or copied fro
 | `fb_dataset_stats` | Distinct items by keyword, kind, language, month posted, group |
 | `fb_dataset_items` | Items with filters (`keyword`, `kind`, `language`, `sentiment`, `run_id`, `batch_id`, `group`, `since`, `until`, `contains`), paged |
 | `fb_label_queue` | Items that still need a sentiment label, with their text |
-| `fb_label_items` | Save labels: negative / neutral / positive + reason (rubric in the tool description) |
+| `fb_label_items` | Save labels: sentiment, aspects, churn, feedback type + reason (rubric in the tool description) |
+| `fb_annotate` | Label automatically: `claude-api` (fixed model, costs money; `dry_run` estimates) or the local `model` |
+| `fb_collect_batch` | Save the labels of a Claude Message Batch |
+| `fb_gold` | Gold set: `sample` a blind sheet, `import` an annotator's sheet, `adjudicate` disagreements |
+| `fb_evaluate` | Methods vs the gold set: precision/recall/F1, confusion matrix, Cohen's kappa |
 | `fb_export` | CSV / JSONL / Parquet with the same filters; `anonymize` |
 | `fb_exclude_items` | Leave items out of the dataset with a reason (kept in `exclusions.json`) |
 | `fb_import_runs` | Import existing run folders into the dataset (safe to repeat) |

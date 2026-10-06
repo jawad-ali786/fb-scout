@@ -30,6 +30,8 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
+from .analysis import METHODS, RUBRIC_VERSION, SENTIMENTS
+from .analysis import normalize as normalize_annotation
 from .dates import finer, resolve
 from .extract import clean_text
 from .lang import detect_language
@@ -37,10 +39,9 @@ from .matching import normalize
 from .storage import RESULTS_FILE, utc_now_iso
 from .urls import UI_LABELS, classify_kind, clean_url, group_post_from_photo, group_segment
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 EXCLUSIONS_FILE = "exclusions.json"
 LABELS_FILE = "labels.json"
-SENTIMENTS = ("negative", "neutral", "positive")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -77,10 +78,12 @@ CREATE TABLE IF NOT EXISTS sightings (
   PRIMARY KEY (item_id, run_id, record_id)
 );
 CREATE INDEX IF NOT EXISTS sightings_keyword ON sightings(keyword);
-CREATE TABLE IF NOT EXISTS labels (
-  item_id TEXT NOT NULL, keyword TEXT NOT NULL COLLATE NOCASE, sentiment TEXT NOT NULL,
-  reason TEXT, labeler TEXT, labeled_at TEXT,
-  PRIMARY KEY (item_id, keyword)
+CREATE TABLE IF NOT EXISTS annotations (
+  item_id TEXT NOT NULL, keyword TEXT NOT NULL COLLATE NOCASE,
+  method TEXT NOT NULL, annotator TEXT NOT NULL DEFAULT '',
+  sentiment TEXT NOT NULL, aspects TEXT, churn TEXT, churn_target TEXT, feedback_type TEXT, reason TEXT,
+  model TEXT, rubric_version TEXT, labeled_at TEXT,
+  PRIMARY KEY (item_id, keyword, method, annotator)
 );
 """
 
@@ -205,6 +208,84 @@ def _record_id(rec: dict) -> str:
     return rec.get("id") or hashlib.sha1(json.dumps(rec, sort_keys=True).encode()).hexdigest()[:12]
 
 
+# The label reports use when several methods labeled an item: a person's final ("gold")
+# label, then the fixed Claude API run, then an agent, then the local model. Annotators
+# other than "gold" (A, B for the agreement check) never decide the reported label.
+PRIMARY_SQL = """SELECT * FROM (SELECT a.*, ROW_NUMBER() OVER (PARTITION BY a.item_id, lower(a.keyword) ORDER BY
+  CASE WHEN a.method = 'human' THEN 0 WHEN a.method = 'claude-api' THEN 1 WHEN a.method = 'agent' THEN 2
+       WHEN a.method = 'model' THEN 3 ELSE 9 END, a.labeled_at DESC) AS rn
+  FROM annotations a WHERE NOT (a.method = 'human' AND a.annotator <> 'gold')) WHERE rn = 1"""
+
+
+def _annotation_row(r: sqlite3.Row) -> dict:
+    d = {k: r[k] for k in r.keys() if k != "rn"}
+    d["aspects"] = json.loads(d["aspects"]) if d.get("aspects") else ([] if d.get("aspects") == "" else d.get("aspects"))
+    return d
+
+
+def _label_source(method: str | None) -> tuple[str, list]:
+    """The annotation rows to filter/count on: the primary label, or one method ("human:A" for an annotator)."""
+    if not method:
+        return f"({PRIMARY_SQL})", []
+    name, _, annotator = method.partition(":")
+    if name not in METHODS:
+        raise ValueError(f"method must be one of {', '.join(METHODS)} (human:<annotator> for a person)")
+    if name == "human":
+        return "(SELECT * FROM annotations WHERE method = 'human' AND annotator = ?)", [annotator or "gold"]
+    return "(SELECT * FROM annotations WHERE method = ?)", [name]
+
+
+_RANK = {"human": 0, "claude-api": 1, "agent": 2, "model": 3}
+
+
+def _primary_per_keyword(annotations: list[dict], method: str | None = None) -> list[dict]:
+    """Per keyword, the label reports use (same order as PRIMARY_SQL), or the given method's label."""
+    best: dict[str, dict] = {}
+    for a in annotations:
+        if method:
+            name, _, annotator = method.partition(":")
+            if a["method"] != name or (name == "human" and a["annotator"] != (annotator or "gold")):
+                continue
+        elif a["method"] == "human" and a["annotator"] != "gold":
+            continue
+        k = a["keyword"].lower()
+        if k not in best or (_RANK.get(a["method"], 9), -_ts(a)) < (_RANK.get(best[k]["method"], 9), -_ts(best[k])):
+            best[k] = a
+    return [best[k] for k in sorted(best)]
+
+
+def _ts(a: dict) -> float:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat((a.get("labeled_at") or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def format_aspects(aspects: list[dict] | None) -> str | None:
+    """'price:negative; warranty:negative' (the spreadsheet form)."""
+    if aspects is None:
+        return None
+    return "; ".join(f"{a['aspect']}:{a.get('sentiment') or ''}".rstrip(":") for a in aspects)
+
+
+def _label_fields(chosen: list[dict]) -> dict:
+    """Flat label fields for an item. With several keywords: "Brand X: negative | Brand Y: neutral"."""
+    fields = ("sentiment", "reason", "churn", "churn_target", "feedback_type", "method")
+    if len(chosen) == 1:
+        a = chosen[0]
+        out = {f: a.get(f) for f in fields}
+        out["aspects"] = a.get("aspects")
+    else:
+        out = {f: " | ".join(f"{a['keyword']}: {a.get(f)}" for a in chosen if a.get(f)) or None for f in fields}
+        joined = " | ".join(f"{a['keyword']}: {format_aspects(a.get('aspects'))}" for a in chosen
+                            if a.get("aspects"))
+        out["aspects"] = joined or None
+    out["sentiment_reason"] = out.pop("reason")
+    out["label_method"] = out.pop("method")
+    return out
+
+
 def _split_list(value: str | list[str] | None) -> list[str]:
     if not value:
         return []
@@ -229,6 +310,7 @@ class Dataset:
         self._exclusions = self._load_exclusions()
         self.labels_path = self.path.with_name(LABELS_FILE)
         self._labels_file = self._load_labels_file()
+        self._migrate_labels_table()
         self._sync_labels()
         self.conn.commit()
 
@@ -413,7 +495,7 @@ class Dataset:
                 kept.add(item_id)
             else:
                 self.conn.execute("DELETE FROM items WHERE item_id = ?", (item_id,))
-                self.conn.execute("DELETE FROM labels WHERE item_id = ?", (item_id,))
+                self.conn.execute("DELETE FROM annotations WHERE item_id = ?", (item_id,))
         return kept
 
     def exclude_items(self, item_ids: list[str], reason: str) -> dict:
@@ -439,29 +521,62 @@ class Dataset:
         return {"excluded_items": len(excluded), "excluded_records": records, "not_found": missing,
                 "exclusions_file": str(self.exclusions_path.resolve()), "items_left": self.count()}
 
-    # ---- sentiment labels ---------------------------------------------------
-    # Set by an AI agent (or a person) per item and keyword, because a post can be
-    # negative about one brand and positive about another. Mirrored in labels.json
-    # so they survive a rebuild of the dataset from the run folders.
+    # ---- annotations (Phase 3) ------------------------------------------------
+    # One per item, keyword and method (+ annotator for people); fields in analysis.py.
+    # Per keyword, because a post can be negative about one brand and positive about
+    # another. Mirrored in labels.json so they survive a rebuild from the run folders.
 
-    def _load_labels_file(self) -> dict[tuple[str, str], dict]:
+    def _load_labels_file(self) -> dict[tuple, dict]:
         try:
             entries = json.loads(self.labels_path.read_text(encoding="utf-8")).get("labels", [])
         except FileNotFoundError:
             return {}
         except (OSError, ValueError, AttributeError) as exc:
             raise ValueError(f"Can't read {self.labels_path}: {exc}") from exc
-        return {(e["item_id"], e["keyword"].lower()): e for e in entries if e.get("item_id") and e.get("keyword")}
+        out = {}
+        for e in entries:
+            if not (e.get("item_id") and e.get("keyword") and e.get("sentiment")):
+                continue
+            if "method" not in e:   # v0.3 file: sentiment only, "labeler" instead of method
+                human = e.get("labeler") == "human"
+                e = {**e, "method": "human" if human else "agent", "annotator": "gold" if human else "",
+                     "model": None if human else e.get("labeler")}
+            out[(e["item_id"], e["keyword"].lower(), e["method"], e.get("annotator") or "")] = e
+        return out
 
     def _save_labels_file(self) -> None:
-        data = {"about": "Sentiment labels (negative / neutral / positive) per item and keyword. "
-                         "Restored into the dataset on import.",
+        data = {"about": "Annotations (sentiment, aspects, churn, feedback type) per item, keyword and method. "
+                         "Restored into the dataset on import. See docs/ANALYSIS.md.",
                 "labels": list(self._labels_file.values())}
         self.labels_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def _migrate_labels_table(self) -> None:
+        """v0.3 kept sentiment-only labels in a `labels` table: move them into `annotations`."""
+        if not self.conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'labels'").fetchone():
+            return
+        for r in self.conn.execute("SELECT item_id, keyword, sentiment, reason, labeler, labeled_at FROM labels"):
+            human = r["labeler"] == "human"
+            self.conn.execute(
+                "INSERT OR IGNORE INTO annotations (item_id, keyword, method, annotator, sentiment, reason, model, "
+                "rubric_version, labeled_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (r["item_id"], r["keyword"], "human" if human else "agent", "gold" if human else "", r["sentiment"],
+                 r["reason"], None if human else r["labeler"], "1", r["labeled_at"]))
+        self.conn.execute("DROP TABLE labels")
+
+    def _insert_annotation(self, item_id: str, keyword: str, method: str, annotator: str, ann: dict,
+                           model: str | None, rubric_version: str | None, labeled_at: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO annotations (item_id, keyword, method, annotator, sentiment, aspects, churn, "
+            "churn_target, feedback_type, reason, model, rubric_version, labeled_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (item_id, keyword, method, annotator, ann["sentiment"],
+             None if ann.get("aspects") is None else json.dumps(ann["aspects"], ensure_ascii=False),
+             ann.get("churn"), ann.get("churn_target"), ann.get("feedback_type"), ann.get("reason"), model,
+             rubric_version, labeled_at))
+
     def _sync_labels(self) -> None:
-        """Put labels from labels.json back into the table (after a rebuild), following the run records."""
-        present = {(r[0], r[1].lower()) for r in self.conn.execute("SELECT item_id, keyword FROM labels")}
+        """Put annotations from labels.json back into the table (after a rebuild), following the run records."""
+        present = {(r[0], r[1].lower(), r[2], r[3]) for r in
+                   self.conn.execute("SELECT item_id, keyword, method, annotator FROM annotations")}
         for key, e in self._labels_file.items():
             if key in present:
                 continue
@@ -471,14 +586,17 @@ class Dataset:
                                 for row in self.conn.execute("SELECT item_id FROM sightings WHERE run_id = ? "
                                                              "AND record_id = ?", (run_id, record_id))), None)
             if item_id:
-                self.conn.execute("INSERT OR REPLACE INTO labels VALUES (?,?,?,?,?,?)",
-                                  (item_id, e["keyword"], e["sentiment"], e.get("reason"), e.get("labeler"),
-                                   e.get("labeled_at")))
+                self._insert_annotation(item_id, e["keyword"], e["method"], e.get("annotator") or "", e,
+                                        e.get("model"), e.get("rubric_version"), e.get("labeled_at"))
 
-    def label_queue(self, *, keyword: str | None = None, run_id: str | None = None, batch_id: str | None = None,
-                    limit: int = 20, text_chars: int = 1500) -> dict:
-        """Items that still need a sentiment label for the keyword(s) that found them."""
-        clauses, params = ["l.item_id IS NULL"], []
+    def item_keywords(self, item_id: str) -> list[str]:
+        return [r[0] for r in self.conn.execute("SELECT DISTINCT keyword FROM sightings WHERE item_id = ?", (item_id,))]
+
+    def label_queue(self, *, method: str = "agent", annotator: str = "", keyword: str | None = None,
+                    run_id: str | None = None, batch_id: str | None = None, limit: int | None = 20,
+                    text_chars: int | None = 1500) -> dict:
+        """(item, keyword) pairs that this method (and annotator) hasn't labeled yet, with their text."""
+        clauses, params = ["a.item_id IS NULL"], [method, annotator]
         if keyword:
             clauses.append("s.keyword = ? COLLATE NOCASE")
             params.append(keyword)
@@ -489,35 +607,36 @@ class Dataset:
             clauses.append("r.batch_id = ?")
             params.append(batch_id)
         base = (" FROM sightings s JOIN runs r ON r.run_id = s.run_id "
-                "LEFT JOIN labels l ON l.item_id = s.item_id AND l.keyword = s.keyword COLLATE NOCASE "
-                "WHERE " + " AND ".join(clauses))
+                "LEFT JOIN annotations a ON a.item_id = s.item_id AND a.keyword = s.keyword COLLATE NOCASE "
+                "AND a.method = ? AND a.annotator = ? WHERE " + " AND ".join(clauses))
         pairs = self.conn.execute("SELECT DISTINCT s.item_id, s.keyword" + base + " ORDER BY s.item_id, s.keyword",
                                   params).fetchall()
         out = []
-        for item_id, kw in pairs[: max(1, int(limit))]:
+        for item_id, kw in (pairs if limit is None else pairs[: max(1, int(limit))]):
             row = self.conn.execute("SELECT * FROM items WHERE item_id = ?", (item_id,)).fetchone()
             text = row["text"] or ""
+            if text_chars and len(text) > text_chars:
+                text = text[:text_chars] + "…"
             out.append({
-                "item_id": item_id, "keyword": kw, "kind": row["kind"], "language": row["language"],
-                "text": text[:text_chars] + ("…" if len(text) > text_chars else ""),
+                "item_id": item_id, "keyword": kw, "kind": row["kind"], "language": row["language"], "text": text,
                 "image_text": row["image_text"], "author_name": row["author_name"], "group_name": row["group_name"],
                 "price": row["price"], "url": row["comment_url"] or row["post_url"], "posted_date": row["posted_date"],
                 "screenshot_path": row["screenshot_path"],
             })
         return {"to_label": out, "remaining": len(pairs)}
 
-    def label_items(self, labels: list[dict], labeler: str = "agent") -> dict:
-        """Save sentiment labels: [{item_id, sentiment, reason, keyword?}]. The keyword may be left out when
-        the item was found by only one keyword."""
+    def annotate(self, entries: list[dict], method: str = "agent", annotator: str = "",
+                 model: str | None = None, rubric_version: str = RUBRIC_VERSION) -> dict:
+        """Save annotations: [{item_id, sentiment, reason, aspects?, churn?, churn_target?, feedback_type?,
+        keyword?}]. The keyword may be left out when the item was found by only one keyword."""
+        if method not in METHODS:
+            raise ValueError(f"method must be one of {', '.join(METHODS)}")
+        if method == "human" and not annotator:
+            raise ValueError("human annotations need an annotator name (e.g. A, B or gold)")
         done, errors = 0, []
-        for entry in labels:
+        for entry in entries:
             item_id = (entry.get("item_id") or "").strip()
-            sentiment = (entry.get("sentiment") or "").strip().lower()
-            if sentiment not in SENTIMENTS:
-                errors.append(f"{item_id or '?'}: sentiment must be one of {', '.join(SENTIMENTS)}")
-                continue
-            found = [r[0] for r in self.conn.execute("SELECT DISTINCT keyword FROM sightings WHERE item_id = ?",
-                                                     (item_id,))]
+            found = self.item_keywords(item_id)
             if not found:
                 errors.append(f"{item_id or '?'}: no such item")
                 continue
@@ -528,29 +647,50 @@ class Dataset:
                     continue
                 keyword = found[0]
             keyword = next((k for k in found if k.lower() == keyword.lower()), keyword)
-            reason = (entry.get("reason") or "").strip()[:300] or None
+            try:
+                ann = normalize_annotation(entry)
+            except ValueError as exc:
+                errors.append(f"{item_id}: {exc}")
+                continue
             now = utc_now_iso()
-            self.conn.execute("INSERT OR REPLACE INTO labels VALUES (?,?,?,?,?,?)",
-                              (item_id, keyword, sentiment, reason, labeler, now))
+            used_model = entry.get("model") or model
+            self._insert_annotation(item_id, keyword, method, annotator, ann, used_model, rubric_version, now)
             refs = [list(r) for r in self.conn.execute("SELECT run_id, record_id FROM sightings WHERE item_id = ?",
                                                        (item_id,))]
-            self._labels_file[(item_id, keyword.lower())] = {
-                "item_id": item_id, "keyword": keyword, "sentiment": sentiment, "reason": reason,
-                "labeler": labeler, "labeled_at": now, "refs": refs}
+            self._labels_file[(item_id, keyword.lower(), method, annotator)] = {
+                "item_id": item_id, "keyword": keyword, "method": method, "annotator": annotator, **ann,
+                "model": used_model, "rubric_version": rubric_version, "labeled_at": now, "refs": refs}
             done += 1
         if done:
             self._save_labels_file()
         self.conn.commit()
         return {"labeled": done, "errors": errors}
 
-    def _labels_for(self, item_ids: list[str]) -> dict[str, list[dict]]:
+    def label_items(self, labels: list[dict], labeler: str = "agent") -> dict:
+        """v0.3 entry point: labels by an agent, or by a person ("human") as the gold label."""
+        if labeler == "human":
+            return self.annotate(labels, method="human", annotator="gold")
+        return self.annotate(labels, method="agent", model=labeler if labeler != "agent" else None)
+
+    def annotations(self, *, method: str | None = None, annotator: str | None = None,
+                    keyword: str | None = None) -> list[dict]:
+        clauses, params = [], []
+        for column, value in (("method", method), ("annotator", annotator)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        if keyword:
+            clauses.append("keyword = ? COLLATE NOCASE")
+            params.append(keyword)
+        sql = "SELECT * FROM annotations" + (" WHERE " + " AND ".join(clauses) if clauses else "")
+        return [_annotation_row(r) for r in self.conn.execute(sql + " ORDER BY item_id, keyword", params)]
+
+    def _annotations_for(self, item_ids: list[str]) -> dict[str, list[dict]]:
         out: dict[str, list[dict]] = {}
         for chunk in (item_ids[i:i + 500] for i in range(0, len(item_ids), 500)):
-            q = (f"SELECT item_id, keyword, sentiment, reason FROM labels "
-                 f"WHERE item_id IN ({', '.join('?' * len(chunk))}) ORDER BY keyword")
+            q = f"SELECT * FROM annotations WHERE item_id IN ({', '.join('?' * len(chunk))}) ORDER BY keyword, method"
             for r in self.conn.execute(q, chunk):
-                out.setdefault(r["item_id"], []).append(
-                    {"keyword": r["keyword"], "sentiment": r["sentiment"], "reason": r["reason"]})
+                out.setdefault(r["item_id"], []).append(_annotation_row(r))
         return out
 
     def _refresh_seen(self, item_ids: set[str]) -> None:
@@ -570,7 +710,11 @@ class Dataset:
     def _where(keyword: str | None = None, kind: str | list[str] | None = None,
                language: str | list[str] | None = None, group: str | None = None, since: str | None = None,
                until: str | None = None, contains: str | None = None, sentiment: str | list[str] | None = None,
-               run_id: str | None = None, batch_id: str | None = None) -> tuple[str, list]:
+               run_id: str | None = None, batch_id: str | None = None, aspect: str | list[str] | None = None,
+               churn: str | list[str] | None = None, feedback_type: str | list[str] | None = None,
+               method: str | None = None) -> tuple[str, list]:
+        """Item filters. sentiment / aspect / churn / feedback_type use the primary label, or the labels of
+        `method` ("claude-api", "agent", "model", "human:<annotator>") when given."""
         clauses, params = [], []
         if run_id:
             clauses.append("item_id IN (SELECT item_id FROM sightings WHERE run_id = ?)")
@@ -579,15 +723,24 @@ class Dataset:
             clauses.append("item_id IN (SELECT s.item_id FROM sightings s JOIN runs r ON r.run_id = s.run_id "
                            "WHERE r.batch_id = ?)")
             params.append(batch_id)
-        sentiments = [v.lower() for v in _split_list(sentiment)]
-        if sentiments:
-            sub = f"SELECT item_id FROM labels WHERE sentiment IN ({', '.join('?' * len(sentiments))})"
-            params_sub = list(sentiments)
+        label_conds, label_params = [], []
+        for column, value in (("sentiment", sentiment), ("churn", churn), ("feedback_type", feedback_type)):
+            values = [v.lower() for v in _split_list(value)]
+            if values:
+                label_conds.append(f"p.{column} IN ({', '.join('?' * len(values))})")
+                label_params.extend(values)
+        aspects = [v.lower() for v in _split_list(aspect)]
+        if aspects:
+            label_conds.append("EXISTS (SELECT 1 FROM json_each(p.aspects) j WHERE json_extract(j.value, '$.aspect') "
+                               f"IN ({', '.join('?' * len(aspects))}))")
+            label_params.extend(aspects)
+        if label_conds:
+            source, source_params = _label_source(method)
             if keyword:
-                sub += " AND keyword = ? COLLATE NOCASE"
-                params_sub.append(keyword)
-            clauses.append(f"item_id IN ({sub})")
-            params.extend(params_sub)
+                label_conds.append("p.keyword = ? COLLATE NOCASE")
+                label_params.append(keyword)
+            clauses.append(f"item_id IN (SELECT p.item_id FROM {source} AS p WHERE {' AND '.join(label_conds)})")
+            params.extend(source_params + label_params)
         if keyword:
             clauses.append("item_id IN (SELECT item_id FROM sightings WHERE keyword = ? COLLATE NOCASE)")
             params.append(keyword)
@@ -630,12 +783,7 @@ class Dataset:
         run_sql = "SELECT COUNT(*) FROM runs" + (" WHERE keyword = ? COLLATE NOCASE" if keyword else "")
         runs = self.conn.execute(run_sql, [keyword] if keyword else []).fetchone()[0]
         month = "substr(posted_date, 1, 7)"
-        label_sql = f"SELECT sentiment, COUNT(DISTINCT item_id) AS n FROM labels WHERE item_id IN (SELECT item_id FROM items {where})"
-        label_params = list(params)
-        if keyword:
-            label_sql += " AND keyword = ? COLLATE NOCASE"
-            label_params.append(keyword)
-        by_sentiment = {r["sentiment"]: r["n"] for r in self.conn.execute(label_sql + " GROUP BY sentiment", label_params)}
+        analysis = self.label_stats(keyword=keyword)
         return {
             "dataset": str(self.path.resolve()),
             "runs": runs,
@@ -648,11 +796,60 @@ class Dataset:
             "by_keyword": by_keyword,
             "by_kind": self._count_by("kind", where, params),
             "by_language": self._count_by("language", where, params),
-            "by_sentiment": by_sentiment,
+            "by_sentiment": analysis["by_sentiment"],
             "not_labeled": total - self.count(keyword=keyword, sentiment=list(SENTIMENTS)),
+            "labels_by_method": analysis["labels_by_method"],
             "by_month_posted": dict(sorted(self._count_by(month, where, params).items())),
             "top_groups": self._count_by("group_name", (where + " AND " if where else "WHERE ")
                                          + "group_name IS NOT NULL", params, limit=10),
+        }
+
+    def label_stats(self, keyword: str | None = None, method: str | None = None, **filters) -> dict:
+        """Phase 3 overview from the primary labels (or one method's): sentiment, aspects, churn,
+        feedback types, and sentiment per month posted."""
+        where, params = self._where(keyword=keyword, **filters)
+        source, source_params = _label_source(method)
+        joins = f" FROM {source} AS p JOIN items i ON i.item_id = p.item_id"
+        cond = f" WHERE p.item_id IN (SELECT item_id FROM items {where})"
+        bp = source_params + list(params)
+        if keyword:
+            cond += " AND p.keyword = ? COLLATE NOCASE"
+            bp.append(keyword)
+        base = joins + cond
+
+        def counts(column: str) -> dict:
+            q = f"SELECT p.{column} AS k, COUNT(*) AS n{base} AND p.{column} IS NOT NULL GROUP BY k ORDER BY n DESC"
+            return {r["k"]: r["n"] for r in self.conn.execute(q, bp)}
+
+        by_aspect: dict[str, dict] = {}
+        q = (f"SELECT json_extract(j.value, '$.aspect') AS a, json_extract(j.value, '$.sentiment') AS s, COUNT(*) AS n"
+             f"{joins}, json_each(p.aspects) j{cond} GROUP BY a, s")
+        for r in self.conn.execute(q, bp):
+            by_aspect.setdefault(r["a"], {})[r["s"]] = r["n"]
+        by_aspect = dict(sorted(by_aspect.items(), key=lambda kv: -sum(kv[1].values())))
+        monthly: dict[str, dict] = {}
+        q = f"SELECT substr(i.posted_date, 1, 7) AS m, p.sentiment AS s, COUNT(*) AS n{base} GROUP BY m, s"
+        for r in self.conn.execute(q, bp):
+            monthly.setdefault(r["m"] or "unknown", {})[r["s"]] = r["n"]
+        targets = {r["k"]: r["n"] for r in self.conn.execute(
+            f"SELECT p.churn_target AS k, COUNT(*) AS n{base} AND p.churn IN ('considering', 'switched') "
+            f"AND p.churn_target IS NOT NULL GROUP BY k ORDER BY n DESC LIMIT 10", bp)}
+        by_method = {}
+        for r in self.conn.execute("SELECT method, annotator, COUNT(*) AS n FROM annotations "
+                                   f"WHERE item_id IN (SELECT item_id FROM items {where})"
+                                   + (" AND keyword = ? COLLATE NOCASE" if keyword else "") + " GROUP BY method, annotator",
+                                   list(params) + ([keyword] if keyword else [])):
+            by_method[r["method"] + (f":{r['annotator']}" if r["annotator"] else "")] = r["n"]
+        return {
+            "labels_from": method or "primary (gold > claude-api > agent > model)",
+            "labeled": self.conn.execute(f"SELECT COUNT(*){base}", bp).fetchone()[0],
+            "by_sentiment": counts("sentiment"),
+            "by_feedback_type": counts("feedback_type"),
+            "by_churn": counts("churn"),
+            "churn_targets": targets,
+            "by_aspect": by_aspect,
+            "sentiment_by_month": dict(sorted(monthly.items())),
+            "labels_by_method": by_method,
         }
 
     def items(self, *, limit: int | None = 50, offset: int = 0, text_chars: int | None = 400,
@@ -668,18 +865,16 @@ class Dataset:
             q = f"SELECT DISTINCT item_id, keyword FROM sightings WHERE item_id IN ({', '.join('?' * len(chunk))})"
             for r in self.conn.execute(q, chunk):
                 keywords.setdefault(r["item_id"], []).append(r["keyword"])
-        labels = self._labels_for(ids)
+        annotations = self._annotations_for(ids)
         want = (filters.get("keyword") or "").lower()
+        method = filters.get("method")
         for r in rows:
             r["keywords"] = sorted(k for k in keywords.get(r["item_id"], []) if k)
-            r["labels"] = labels.get(r["item_id"], [])
-            chosen = [l for l in r["labels"] if l["keyword"].lower() == want] if want else r["labels"]
-            if len(chosen) == 1:
-                r["sentiment"], r["sentiment_reason"] = chosen[0]["sentiment"], chosen[0]["reason"]
-            else:   # none, or several keywords: "Brand X: negative | Brand Y: neutral"
-                r["sentiment"] = " | ".join(f"{l['keyword']}: {l['sentiment']}" for l in chosen) or None
-                r["sentiment_reason"] = " | ".join(f"{l['keyword']}: {l['reason']}" for l in chosen
-                                                   if l["reason"]) or None
+            r["annotations"] = annotations.get(r["item_id"], [])
+            chosen = _primary_per_keyword(r["annotations"], method)
+            if want:
+                chosen = [a for a in chosen if a["keyword"].lower() == want]
+            r.update(_label_fields(chosen))
             if text_chars and r.get("text") and len(r["text"]) > text_chars:
                 r["text"] = r["text"][:text_chars] + "…"
         return rows

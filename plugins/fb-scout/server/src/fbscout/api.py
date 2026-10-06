@@ -140,7 +140,20 @@ def dataset_stats(output_dir: str | None = None, keyword: str | None = None) -> 
     if error:
         return error
     with ds:
-        return {"ok": True, **ds.stats(keyword)}
+        return {"ok": True, **ds.stats(keyword), "analysis": ds.label_stats(keyword=keyword)}
+
+
+def analysis_stats(output_dir: str | None = None, keyword: str | None = None, method: str | None = None,
+                   **filters) -> dict:
+    """Sentiment, aspects, churn, feedback types and sentiment per month, from the primary labels (or one method)."""
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    try:
+        with ds:
+            return {"ok": True, **ds.label_stats(keyword=keyword, method=method, **filters)}
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
 
 
 def dataset_items(output_dir: str | None = None, limit: int = 50, offset: int = 0, full_text: bool = False,
@@ -150,9 +163,12 @@ def dataset_items(output_dir: str | None = None, limit: int = 50, offset: int = 
         return error
     root = _root(output_dir).resolve()
     limit, offset = max(1, min(500, int(limit))), max(0, int(offset))
-    with ds:
-        rows = ds.items(limit=limit, offset=offset, text_chars=None if full_text else 400, **filters)
-        total = ds.count(**filters)
+    try:
+        with ds:
+            rows = ds.items(limit=limit, offset=offset, text_chars=None if full_text else 400, **filters)
+            total = ds.count(**filters)
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
     for r in rows:
         r.pop("url_key", None)
         r.pop("content_key", None)
@@ -173,13 +189,14 @@ def dataset_exclude(item_ids: list[str], reason: str, output_dir: str | None = N
 
 
 def label_queue(output_dir: str | None = None, keyword: str | None = None, run_id: str | None = None,
-                batch_id: str | None = None, limit: int = 20) -> dict:
+                batch_id: str | None = None, limit: int = 20, method: str = "agent") -> dict:
     ds, error = _open_dataset(output_dir)
     if error:
         return error
     root = _root(output_dir).resolve()
     with ds:
-        result = ds.label_queue(keyword=keyword, run_id=run_id, batch_id=batch_id, limit=max(1, min(50, int(limit))))
+        result = ds.label_queue(method=method, keyword=keyword, run_id=run_id, batch_id=batch_id,
+                                limit=max(1, min(50, int(limit))))
     for item in result["to_label"]:
         item["screenshot_file"] = str(root / item["screenshot_path"]) if item.get("screenshot_path") else None
     return {"ok": True, **result}
@@ -192,6 +209,152 @@ def label_items(labels: list[dict], output_dir: str | None = None, labeler: str 
     with ds:
         result = ds.label_items(labels, labeler)
     return {"ok": not result["errors"], **result}
+
+
+def annotate(entries: list[dict], output_dir: str | None = None, method: str = "agent", annotator: str = "",
+             model: str | None = None) -> dict:
+    """Save annotations (sentiment, aspects, churn, feedback type) from an agent or a person."""
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    try:
+        with ds:
+            result = ds.annotate(entries, method=method, annotator=annotator, model=model)
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
+    return {"ok": not result["errors"], **result}
+
+
+# ---- Phase 3: automatic labeling, gold set, evaluation ----------------------------
+
+# Rough cost per item for the estimate before a Claude API run (rubric cached; text, JSON and thinking vary).
+_EST_TOKENS = {"low": 600, "medium": 1100, "high": 2200, "xhigh": 3500, "max": 5000}
+
+
+def _estimate(items: list[dict], model: str, effort: str, batch: bool) -> dict:
+    from . import claude_labeler as cl
+    prices = cl.PRICES.get(model)
+    if not prices:
+        return {"items": len(items), "estimated_cost_usd": None}
+    text_tokens = sum(len(it.get("text") or "") for it in items) / 3.5 + 120 * len(items)
+    out_tokens = _EST_TOKENS.get(effort, 1100) * len(items)
+    rubric = 1900 * prices[3] * len(items) + 1900 * prices[2]
+    usd = (text_tokens * prices[0] + out_tokens * prices[1] + rubric) / 1_000_000 * (0.5 if batch else 1)
+    return {"items": len(items), "estimated_cost_usd": round(usd, 2),
+            "estimate_note": "rough: real thinking and output length vary; the run reports the actual cost"}
+
+
+def analyze(method: str, output_dir: str | None = None, keyword: str | None = None, run_id: str | None = None,
+            batch_id: str | None = None, limit: int | None = 100, mode: str = "sync", model: str | None = None,
+            effort: str | None = None, dry_run: bool = False, progress=None) -> dict:
+    """Label the items that `method` ("claude-api" or "model") hasn't labeled yet."""
+    from . import claude_labeler as cl
+    from . import local_model as lm
+
+    if method not in ("claude-api", "model"):
+        return {"ok": False, "error": "invalid_argument",
+                "message": "method must be 'claude-api' or 'model' (agents label through fb_label_items)"}
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    with ds:
+        queue = ds.label_queue(method=method, keyword=keyword, run_id=run_id, batch_id=batch_id,
+                               limit=limit, text_chars=None)
+        items = queue["to_label"]
+        base = {"method": method, "to_label": len(items), "not_labeled_in_total": queue["remaining"]}
+        if not items:
+            return {"ok": True, **base, "labeled": 0, "message": "Nothing left to label for this method."}
+        try:
+            if method == "model":
+                name = model or lm.DEFAULT_MODEL
+                if dry_run:
+                    return {"ok": True, "dry_run": True, **base, "model": name}
+                return {"ok": True, **base, **lm.label_with_model(ds, items, name, progress=progress)}
+            name, eff = model or cl.DEFAULT_MODEL, effort or cl.DEFAULT_EFFORT
+            if mode not in ("sync", "batch"):
+                raise ValueError("mode must be 'sync' or 'batch'")
+            if dry_run:
+                return {"ok": True, "dry_run": True, **base, "model": name, "effort": eff, "mode": mode,
+                        **_estimate(items, name, eff, mode == "batch")}
+            if mode == "batch":
+                state_dir = _root(output_dir).resolve() / "_claude_batches"
+                return {"ok": True, **base, **cl.submit_batch(ds, items, state_dir, name, eff),
+                        "next_step": "Collect the labels later with collect_batch (fbscout analyze --collect <id>)."}
+            result = cl.label_sync(ds, items, name, eff, progress=progress)
+            return {"ok": not result["errors"], **base, **result}
+        except (cl.LabelerUnavailable, lm.ModelUnavailable) as exc:
+            return {"ok": False, "error": "unavailable", "message": str(exc)}
+        except ValueError as exc:
+            return {"ok": False, "error": "invalid_argument", "message": str(exc)}
+
+
+def collect_batch(batch_id: str, output_dir: str | None = None, wait_minutes: float = 0) -> dict:
+    from . import claude_labeler as cl
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    try:
+        with ds:
+            result = cl.collect_batch(ds, batch_id, _root(output_dir).resolve() / "_claude_batches", wait_minutes)
+    except cl.LabelerUnavailable as exc:
+        return {"ok": False, "error": "unavailable", "message": str(exc)}
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
+    return {"ok": not result.get("errors"), **result}
+
+
+def gold_sample(output_dir: str | None = None, n: int = 300, keyword: str | None = None, seed: int = 42,
+                stratify: bool = False, file: str | None = None) -> dict:
+    from . import evaluation as ev
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    root = _root(output_dir).resolve()
+    target = Path(file) if file else root / "_gold" / f"gold_sample_{ev._stamp()}.csv"
+    with ds:
+        return {"ok": True, **ev.sample_sheet(ds, target, n, keyword, seed, stratify, root),
+                "next_step": "Give the sheet and its instructions to two people; import each filled sheet "
+                             "with annotator A and B (gold_import)."}
+
+
+def gold_import(file: str, annotator: str, output_dir: str | None = None) -> dict:
+    from . import evaluation as ev
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    try:
+        with ds:
+            result = ev.import_sheet(ds, Path(file), annotator)
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
+    return {"ok": not result["errors"], **result}
+
+
+def gold_adjudication(output_dir: str | None = None, a: str = "A", b: str = "B", keyword: str | None = None,
+                      file: str | None = None) -> dict:
+    from . import evaluation as ev
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    root = _root(output_dir).resolve()
+    target = Path(file) if file else root / "_gold" / f"adjudication_{a}_{b}_{ev._stamp()}.csv"
+    with ds:
+        return {"ok": True, **ev.adjudication_sheet(ds, target, a, b, keyword)}
+
+
+def evaluate(output_dir: str | None = None, reference: str = "gold", methods: list[str] | None = None,
+             keyword: str | None = None, save: bool = True) -> dict:
+    from . import evaluation as ev
+    ds, error = _open_dataset(output_dir)
+    if error:
+        return error
+    try:
+        with ds:
+            result = ev.evaluate(ds, reference, methods, keyword)
+    except ValueError as exc:
+        return {"ok": False, "error": "invalid_argument", "message": str(exc)}
+    files = ev.save_report(result, _root(output_dir).resolve() / "_reports") if save else {}
+    return {"ok": True, **result, "report_files": files}
 
 
 def dataset_export(output_dir: str | None = None, fmt: str = "csv", out_file: str | None = None,

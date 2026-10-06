@@ -1,6 +1,6 @@
 [project]
 name = "fbscout"
-version = "0.3.0"
+version = "0.4.0"
 description = "Search Facebook for a keyword, screenshot matching posts/comments and save JSON metadata (research tool)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -11,13 +11,25 @@ dependencies = [
 
 [project.optional-dependencies]
 parquet = ["pyarrow>=15"]   # only for `fbscout db export --format parquet`
+claude = ["anthropic>=1.11"]   # Phase 3: labeling with the Claude API (`fbscout analyze --method claude-api`)
+# Phase 3: local sentiment model (`fbscout analyze --method model`); about 1.3 GB with the model
+ml = ["torch>=2.6", "transformers>=4.44", "sentencepiece>=0.2", "protobuf>=4"]
 
 [project.scripts]
 fbscout = "fbscout.cli:main"
 fbscout-mcp = "fbscout.mcp_server:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "anthropic>=1.11"]
+
+# PyTorch from its CPU-only index: the default (PyPI) build pulls several GB of CUDA libraries on Linux.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

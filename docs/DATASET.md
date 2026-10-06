@@ -8,7 +8,7 @@ same post found by several runs becomes a single item:
 fb-scout-output/
 ├── fbscout.sqlite          ← the dataset (all runs, duplicates merged)
 ├── exclusions.json         ← records left out of the dataset, with reasons
-├── labels.json             ← sentiment labels (negative / neutral / positive), see SENTIMENT.md
+├── labels.json             ← labels (sentiment, aspects, churn, feedback type) of every method, see ANALYSIS.md
 ├── _exports/               ← CSV / JSONL / Parquet exports
 ├── _batches/               ← one report per study (batch) run
 └── <keyword>/<timestamp>/  ← the runs, as before
@@ -47,7 +47,7 @@ is idempotent: importing a run again adds nothing. The path can be changed with 
 | `screenshot_path` | first screenshot, relative to the output folder |
 | `first_seen`, `last_seen`, `times_seen` | when runs found it, and in how many runs |
 
-A fourth table, `labels`, holds the sentiment labels per item and keyword (see [SENTIMENT.md](SENTIMENT.md)).
+A fourth table, `annotations`, holds the Phase 3 labels per item, keyword and method (see [ANALYSIS.md](ANALYSIS.md)).
 
 To use the tables directly: `sqlite3 fb-scout-output/fbscout.sqlite`, DB Browser for SQLite,
 `pandas.read_sql`, or R's `DBI`.

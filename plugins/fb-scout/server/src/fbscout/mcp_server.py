@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from typing import Literal
@@ -197,8 +198,9 @@ def fb_list_runs(output_dir: str | None = None, keyword: str | None = None, limi
 @mcp.tool()
 def fb_dataset_stats(keyword: str | None = None, output_dir: str | None = None) -> dict:
     """Overview of the dataset (all runs, duplicates merged): number of distinct posts/comments, how
-    many were seen in more than one run, and counts by keyword, kind, language, sentiment label, month
-    posted and group."""
+    many were seen in more than one run, counts by keyword, kind, language, month posted and group, and
+    under `analysis` the Phase 3 picture from the primary labels: sentiment, aspects (with sentiment per
+    aspect), churn and churn targets, feedback types, sentiment per month and labels per method."""
     return api.dataset_stats(output_dir, keyword)
 
 
@@ -208,6 +210,10 @@ def fb_dataset_items(
     kind: str | None = None,
     language: str | None = None,
     sentiment: str | None = None,
+    aspect: str | None = None,
+    churn: str | None = None,
+    feedback_type: str | None = None,
+    label_method: str | None = None,
     run_id: str | None = None,
     batch_id: str | None = None,
     group: str | None = None,
@@ -224,11 +230,15 @@ def fb_dataset_items(
     characters unless full_text) and the absolute screenshot_file path.
 
     Filters: keyword; kind, language and sentiment as comma-separated lists (e.g. 'post,group_post',
-    'ur,ur-Latn', 'negative'); run_id (items of one run) or batch_id (of one study); group (name/URL contains); since/until as
+    'ur,ur-Latn', 'negative'); aspect, churn and feedback_type lists (e.g. 'price,warranty',
+    'considering,switched', 'complaint'), judged from the primary label (gold > claude-api > agent > model)
+    or from label_method's labels ('model', 'human:A', ...); run_id (items of one run) or batch_id (of one
+    study); group (name/URL contains); since/until as
     YYYY-MM-DD on the posted date; contains (text, image text, price or location). Page through with
     limit (max 500) and offset."""
     return api.dataset_items(output_dir, limit, offset, full_text, keyword=keyword, kind=kind, language=language,
-                             sentiment=sentiment, run_id=run_id, batch_id=batch_id, group=group, since=since,
+                             sentiment=sentiment, aspect=aspect, churn=churn, feedback_type=feedback_type,
+                             method=label_method, run_id=run_id, batch_id=batch_id, group=group, since=since,
                              until=until, contains=contains)
 
 
@@ -248,17 +258,95 @@ def fb_label_queue(
 
 @mcp.tool()
 def fb_label_items(labels: list[dict], output_dir: str | None = None) -> dict:
-    """Save sentiment labels: a list of {"item_id", "sentiment", "reason", "keyword"?}.
-    sentiment is 'negative', 'neutral' or 'positive' TOWARDS THE KEYWORD (brand/product/topic):
-    - negative: complaint, criticism, bad experience, defect/failure, scam/fraud claim, refund or service
-      problem, warning others, anger, switching away ("never again", "switching to Y"), sarcastic praise.
-      Roman Urdu/Urdu cues: bekar, ghatiya, kharab, fraud, dhoka, paisay zaya, worst, شکایت, خراب.
-    - positive: praise, recommendation, satisfaction.
-    - neutral: ads, sale listings, price lists, announcements, questions without an opinion, news,
-      or an opinion about something else.
-    reason: one short sentence quoting the cue (max 300 characters). keyword can be left out when the item
-    was found by only one keyword. Labels are kept per item and keyword in the dataset and labels.json."""
+    """Save your labels for items from fb_label_queue: a list of
+    {"item_id", "sentiment", "reason", "aspects", "churn", "churn_target", "feedback_type", "keyword"?}.
+    Everything is judged TOWARDS THE KEYWORD (brand/product/topic), following the rubric:
+    - sentiment: negative (complaint, criticism, bad experience, defect, scam/fraud claim, refund or service
+      problem, warning others, anger, switching away, sarcastic praise) / positive (praise, recommendation,
+      satisfaction) / neutral (ads, sale listings, price lists, announcements, news, questions without a
+      complaint, opinions about something else). An edit counts ("Edit: worst experience" is negative).
+      Roman Urdu/Urdu cues: bekar, ghatiya, kharab, fraud, dhoka, paisay zaya, masla, شکایت, خراب.
+    - aspects: [{"aspect", "sentiment"}] with aspect one of price, product_quality, performance, durability,
+      installation, delivery, customer_service, warranty, availability, safety, other; [] when there is no
+      opinion (e.g. an ad).
+    - churn: none / considering (thinking of leaving, asking for alternatives) / switched (left, won't buy
+      again); churn_target: the brand they move to, or "".
+    - feedback_type: complaint, defect_report, feature_request, praise, question, advertisement, news, other.
+    - reason: one short sentence quoting the deciding words.
+    Only sentiment is required (older labels have just that), but give all fields. keyword can be left out
+    when the item was found by only one keyword. Stored as method "agent" in the dataset and labels.json."""
     return api.label_items(labels, output_dir)
+
+
+@mcp.tool()
+async def fb_annotate(
+    method: Literal["claude-api", "model"],
+    keyword: str | None = None,
+    run_id: str | None = None,
+    batch_id: str | None = None,
+    limit: int = 100,
+    mode: Literal["sync", "batch"] = "sync",
+    model: str | None = None,
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None,
+    dry_run: bool = False,
+    output_dir: str | None = None,
+) -> dict:
+    """Label items automatically (Phase 3), as a method to compare with people and with each other:
+    - 'claude-api': a fixed Claude model (default claude-opus-5-5, effort medium) with the fixed rubric and a
+      JSON schema; all fields (sentiment, aspects, churn, feedback type). Needs the `claude` extra and an
+      Anthropic API key; COSTS MONEY (roughly US$0.5-1.5 per 100 items; batch mode is half price but
+      returns later). Always call with dry_run=true first and tell the user the estimate before running.
+    - 'model': the local multilingual model (XLM-RoBERTa), sentiment only, free, offline; needs the `ml`
+      extra (about 1.3 GB, downloaded once).
+    Only items this method hasn't labeled yet; narrow with keyword / run_id / batch_id; at most `limit`."""
+    return await asyncio.to_thread(api.analyze, method, output_dir, keyword, run_id, batch_id, limit, mode, model,
+                                   effort, dry_run)
+
+
+@mcp.tool()
+async def fb_collect_batch(batch_id: str, wait_minutes: float = 0, output_dir: str | None = None) -> dict:
+    """Save the labels of a Claude API Message Batch submitted by fb_annotate(mode='batch'). If it isn't
+    finished, says so (batches usually take under an hour, at most 24 hours)."""
+    return await asyncio.to_thread(api.collect_batch, batch_id, output_dir, wait_minutes)
+
+
+@mcp.tool()
+def fb_gold(
+    action: Literal["sample", "import", "adjudicate"],
+    n: int = 300,
+    keyword: str | None = None,
+    stratify: bool = False,
+    seed: int = 42,
+    file: str | None = None,
+    annotator: str | None = None,
+    a: str = "A",
+    b: str = "B",
+    output_dir: str | None = None,
+) -> dict:
+    """The hand-labeled gold set that methods are evaluated against:
+    - 'sample': a blind sheet (CSV for Excel, no AI labels) of `n` random items (stratify=true: equal
+      numbers per sentiment) plus an instructions file with the rubric. Two people label it independently.
+    - 'import': read a filled sheet (`file`) as `annotator` ("A", "B", or "gold" for final labels).
+    - 'adjudicate': a sheet of the items annotators `a` and `b` disagree on; a third person decides and the
+      sheet is imported as annotator "gold"."""
+    if action == "sample":
+        return api.gold_sample(output_dir, n, keyword, seed, stratify, file)
+    if action == "import":
+        if not file or not annotator:
+            return {"ok": False, "error": "invalid_argument", "message": "import needs file and annotator"}
+        return api.gold_import(file, annotator, output_dir)
+    return api.gold_adjudication(output_dir, a, b, keyword, file)
+
+
+@mcp.tool()
+def fb_evaluate(reference: str = "gold", methods: list[str] | None = None, keyword: str | None = None,
+                output_dir: str | None = None) -> dict:
+    """Compare labeling methods with the reference: precision, recall, F1 and confusion matrix per class
+    for sentiment, churn and feedback type; precision/recall/F1 for aspects; Cohen's kappa; and agreement
+    between annotators A and B. reference: 'gold' (the gold annotator, else items where A and B agree), or
+    a method ('agent', 'claude-api', 'model', 'human:A') to compare two methods. Saves a Markdown and JSON
+    report in <output>/_reports/."""
+    return api.evaluate(output_dir, reference, methods, keyword)
 
 
 @mcp.tool()
@@ -269,6 +357,10 @@ def fb_export(
     kind: str | None = None,
     language: str | None = None,
     sentiment: str | None = None,
+    aspect: str | None = None,
+    churn: str | None = None,
+    feedback_type: str | None = None,
+    label_method: str | None = None,
     run_id: str | None = None,
     batch_id: str | None = None,
     group: str | None = None,
@@ -285,7 +377,8 @@ def fb_export(
     the text and screenshots are not removed. Same filters as fb_dataset_items (e.g. sentiment='negative').
     Default file: <output>/_exports/fbscout_<keyword|all>_<timestamp>.<format>."""
     return api.dataset_export(output_dir, format, file, anonymize, keyword=keyword, kind=kind, language=language,
-                              sentiment=sentiment, run_id=run_id, batch_id=batch_id, group=group, since=since,
+                              sentiment=sentiment, aspect=aspect, churn=churn, feedback_type=feedback_type,
+                              method=label_method, run_id=run_id, batch_id=batch_id, group=group, since=since,
                               until=until, contains=contains)
 
 

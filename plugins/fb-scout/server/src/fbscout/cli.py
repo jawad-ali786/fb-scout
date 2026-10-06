@@ -8,7 +8,11 @@
     fbscout runs [--keyword K]
     fbscout db import | stats [--keyword K] | export [--format csv|jsonl|parquet] [--anonymize] [filters]
     fbscout db exclude ITEM_ID... --reason TEXT
-    fbscout db label ITEM_ID... --sentiment negative|neutral|positive [--reason TEXT] [--keyword K]
+    fbscout db label ITEM_ID... --sentiment negative|neutral|positive [--aspects ...] [--churn ...] [--annotator gold]
+    fbscout analyze --method claude-api|model [--mode sync|batch] [--keyword K] [--limit N] [--dry-run]
+    fbscout analyze --collect BATCH_ID [--wait MINUTES]
+    fbscout gold sample [--n 300] [--stratify] | import FILE --annotator A | adjudicate [--a A --b B]
+    fbscout evaluate [--reference gold] [--methods claude-api,agent,model]
 """
 
 from __future__ import annotations
@@ -35,6 +39,11 @@ def _add_filters(p: argparse.ArgumentParser) -> None:
     p.add_argument("--sentiment", help="comma-separated labels: negative,neutral,positive")
     p.add_argument("--run", dest="run_id", help="only items found by this run (run_id)")
     p.add_argument("--batch", dest="batch_id", help="only items found by this study (batch_id)")
+    p.add_argument("--aspect", help="comma-separated aspects, e.g. price,customer_service")
+    p.add_argument("--churn", help="comma-separated: considering,switched")
+    p.add_argument("--feedback", dest="feedback_type", help="comma-separated feedback types, e.g. complaint")
+    p.add_argument("--label-method", dest="method",
+                   help="filter on this method's labels (claude-api, agent, model, human:A) instead of the primary")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -90,12 +99,57 @@ def _parser() -> argparse.ArgumentParser:
     exc.add_argument("item_ids", nargs="+", metavar="ITEM_ID", help="item ids (i_...) from stats/export")
     exc.add_argument("--reason", required=True, help="why, e.g. 'not about the brand'")
     exc.add_argument("--out", dest="output_dir")
-    lb = dbsub.add_parser("label", help="set a sentiment label by hand (e.g. for a hand-checked gold set)")
+    lb = dbsub.add_parser("label", help="label items by hand (stored as a person's label, 'gold' by default)")
     lb.add_argument("item_ids", nargs="+", metavar="ITEM_ID")
     lb.add_argument("--sentiment", required=True, choices=["negative", "neutral", "positive"])
+    lb.add_argument("--aspects", help="'price:negative; warranty:negative'")
+    lb.add_argument("--churn", choices=["none", "considering", "switched"])
+    lb.add_argument("--churn-target")
+    lb.add_argument("--feedback", dest="feedback_type")
     lb.add_argument("--reason")
+    lb.add_argument("--annotator", default="gold", help="who labels: gold (final, default), A, B, ...")
     lb.add_argument("--keyword", help="needed when the item was found by several keywords")
     lb.add_argument("--out", dest="output_dir")
+
+    an = sub.add_parser("analyze", help="label items automatically: Claude API or the local model (Phase 3)")
+    an.add_argument("--method", choices=["claude-api", "model"], help="who labels")
+    an.add_argument("--mode", choices=["sync", "batch"], default="sync", help="claude-api: now, or as a Message Batch")
+    an.add_argument("--keyword")
+    an.add_argument("--run", dest="run_id")
+    an.add_argument("--batch-id", dest="study_batch_id", help="only items of this study (batch_id)")
+    an.add_argument("--limit", type=int, default=100, help="at most this many items (default 100)")
+    an.add_argument("--model", help="model id (default: claude-opus-5-5, or the local XLM-R sentiment model)")
+    an.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], help="claude-api (default medium)")
+    an.add_argument("--dry-run", action="store_true", help="only count the items and estimate the cost")
+    an.add_argument("--collect", metavar="BATCH_ID", help="save the labels of a submitted Message Batch")
+    an.add_argument("--wait", type=float, default=0, help="with --collect: minutes to wait for the batch")
+    an.add_argument("--out", dest="output_dir")
+
+    gd = sub.add_parser("gold", help="gold set: sample sheets for people to label, import them, adjudicate")
+    gsub = gd.add_subparsers(dest="gold_cmd", required=True)
+    gs = gsub.add_parser("sample", help="a blind labeling sheet (CSV for Excel) + instructions")
+    gs.add_argument("--n", type=int, default=300)
+    gs.add_argument("--keyword")
+    gs.add_argument("--seed", type=int, default=42)
+    gs.add_argument("--stratify", action="store_true", help="same number per (primary) sentiment label")
+    gs.add_argument("--file")
+    gs.add_argument("--out", dest="output_dir")
+    gi = gsub.add_parser("import", help="import a filled sheet")
+    gi.add_argument("file")
+    gi.add_argument("--annotator", required=True, help="A, B, ... or gold for the final labels")
+    gi.add_argument("--out", dest="output_dir")
+    ga = gsub.add_parser("adjudicate", help="a sheet of the items two annotators disagree on")
+    ga.add_argument("--a", default="A")
+    ga.add_argument("--b", default="B")
+    ga.add_argument("--keyword")
+    ga.add_argument("--file")
+    ga.add_argument("--out", dest="output_dir")
+
+    ev = sub.add_parser("evaluate", help="compare methods with the gold labels (precision/recall/F1, kappa)")
+    ev.add_argument("--reference", default="gold", help="gold (default), or a method: agent, human:A, ...")
+    ev.add_argument("--methods", help="comma-separated (default: every automatic method present)")
+    ev.add_argument("--keyword")
+    ev.add_argument("--out", dest="output_dir")
     ex = dbsub.add_parser("export", help="export items as CSV (Excel), JSONL or Parquet")
     ex.add_argument("--out", dest="output_dir")
     ex.add_argument("--format", dest="fmt", choices=["csv", "jsonl", "parquet"], default="csv")
@@ -111,7 +165,8 @@ async def _cli_progress(message: str, done: int, total: int) -> None:
 
 def _filters(args: argparse.Namespace) -> dict:
     return {k: getattr(args, k) for k in ("keyword", "kind", "language", "group", "since", "until", "contains",
-                                          "sentiment", "run_id", "batch_id")}
+                                          "sentiment", "run_id", "batch_id", "aspect", "churn",
+                                          "feedback_type", "method")}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -164,6 +219,25 @@ def main(argv: list[str] | None = None) -> int:
                 result = {"ok": True, "dry_run": True, **study.describe()}
             else:
                 result = asyncio.run(api.batch(study, _cli_progress))
+    elif args.cmd == "analyze":
+        if args.collect:
+            result = api.collect_batch(args.collect, args.output_dir, args.wait)
+        elif not args.method:
+            result = {"ok": False, "error": "invalid_argument", "message": "Give --method claude-api|model or --collect."}
+        else:
+            result = api.analyze(args.method, args.output_dir, args.keyword, args.run_id, args.study_batch_id,
+                                 args.limit, args.mode, args.model, args.effort, args.dry_run,
+                                 progress=lambda message, done, total: print(f"  {message}", file=sys.stderr, flush=True))
+    elif args.cmd == "gold":
+        if args.gold_cmd == "sample":
+            result = api.gold_sample(args.output_dir, args.n, args.keyword, args.seed, args.stratify, args.file)
+        elif args.gold_cmd == "import":
+            result = api.gold_import(args.file, args.annotator, args.output_dir)
+        else:
+            result = api.gold_adjudication(args.output_dir, args.a, args.b, args.keyword, args.file)
+    elif args.cmd == "evaluate":
+        methods = [m.strip() for m in args.methods.split(",")] if args.methods else None
+        result = api.evaluate(args.output_dir, args.reference, methods, args.keyword)
     elif args.cmd == "db":
         if args.db_cmd == "import":
             result = api.dataset_import(args.output_dir)
@@ -172,8 +246,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.db_cmd == "exclude":
             result = api.dataset_exclude(args.item_ids, args.reason, args.output_dir)
         elif args.db_cmd == "label":
-            result = api.label_items([{"item_id": i, "sentiment": args.sentiment, "reason": args.reason,
-                                       "keyword": args.keyword} for i in args.item_ids], args.output_dir, "human")
+            entries = [{"item_id": i, "sentiment": args.sentiment, "reason": args.reason, "keyword": args.keyword,
+                        "aspects": args.aspects, "churn": args.churn, "churn_target": args.churn_target,
+                        "feedback_type": args.feedback_type} for i in args.item_ids]
+            result = api.annotate(entries, args.output_dir, method="human", annotator=args.annotator)
         else:
             result = api.dataset_export(args.output_dir, args.fmt, args.out_file, args.anonymize, **_filters(args))
     else:

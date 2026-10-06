@@ -329,7 +329,7 @@ def test_old_dataset_file_gets_new_columns(tmp_path):
     with Dataset(db) as ds:
         cols = {r[1] for r in ds.conn.execute("PRAGMA table_info(items)")}
         assert {"price", "location", "condition"} <= cols
-        assert ds.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "2"
+        assert ds.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "3"
 
 
 def test_profile_cards_dedupe_by_profile():
