@@ -33,24 +33,31 @@ MARK_BLUR_JS = """(el, indices) => {
 
 CLEAR_BLUR_JS = "(el) => el.querySelectorAll('[data-fbscout-blur]').forEach(n => n.removeAttribute('data-fbscout-blur'))"
 
-HIGHLIGHT_JS = """(el, terms) => {
+# Same rule as matching._pattern: any non-letter/digit characters between the words
+# ("solar-panel", "Solar+Panel", "solar_panel"); leading/trailing symbols stay literal.
+HIGHLIGHT_JS = r"""(el, terms) => {
   if (!window.CSS || !CSS.highlights || typeof Highlight === 'undefined') return -1;
-  const needles = terms.map(t => t.toLowerCase()).filter(Boolean);
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const sep = '[^\\p{L}\\p{N}]+';
+  const toRegex = (t) => {
+    const parts = t.split(/([^\p{L}\p{N}]+)/u);
+    return new RegExp(parts.map((p, i) => i % 2 === 0 || !(parts[i - 1] && i + 1 < parts.length && parts[i + 1])
+      ? esc(p) : sep).join(''), 'giu');
+  };
+  const patterns = terms.filter(Boolean).map(toRegex);
   const ranges = [];
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   let node;
   while ((node = walker.nextNode())) {
     const value = node.nodeValue || '';
-    const hay = value.toLowerCase();
-    if (hay.length !== value.length) continue;   // rare case-mapping length change
-    for (const n of needles) {
-      let i = hay.indexOf(n);
-      while (i !== -1) {
+    for (const re of patterns) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(value))) {
         const r = new Range();
-        r.setStart(node, i);
-        r.setEnd(node, i + n.length);
+        r.setStart(node, m.index);
+        r.setEnd(node, m.index + m[0].length);
         ranges.push(r);
-        i = hay.indexOf(n, i + n.length);
       }
     }
   }

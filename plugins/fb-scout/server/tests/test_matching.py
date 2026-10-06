@@ -10,6 +10,32 @@ def test_phrase_case_and_whitespace():
     assert "SOLAR panel" in m.snippet
 
 
+@pytest.mark.parametrize("text", [
+    "solar-panel cleaning", "LONGi 645W Solar+Panel New Arrival", "+LONGi+Hi-MO+10+645W+Solar+Panel+",
+    "solar - panel", "solar_panel", "solar.panel", "solar/panel", "#solar_panel", "solar🌞panel", "solar...panel",
+])
+def test_phrase_words_joined_by_any_special_characters(text):
+    assert match_keyword("solar panel", text).ok
+
+
+@pytest.mark.parametrize("text", ["solarpanel", "#solarpanel", "solar panels", "solar paneling", "big solarpanel"])
+def test_phrase_words_written_together_or_longer_are_not_a_match(text):
+    assert not match_keyword("solar panel", text).ok
+
+
+def test_special_characters_inside_the_keyword_are_flexible_too():
+    assert match_keyword("solar-panel", "best solar panel price").ok
+    assert match_keyword("Hi-MO 10", "LONGi HiMO? no: LONGi Hi MO 10").ok
+    assert match_keyword("K-Electric", "k electric bill").ok
+
+
+def test_symbols_at_the_ends_of_a_keyword_stay_literal():
+    assert match_keyword("C++", "I write C++ code").ok
+    assert not match_keyword("C++", "I write C code").ok
+    assert match_keyword("#solar", "#solar power").ok
+    assert not match_keyword("#solar", "solar power").ok
+
+
 def test_phrase_respects_word_boundaries():
     assert not match_keyword("car", "I lost my scarf").ok
     assert not match_keyword("solar panel", "#solarpanel cleaning tips").ok

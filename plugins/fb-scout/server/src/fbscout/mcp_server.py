@@ -88,7 +88,7 @@ async def fb_search(
 
     - max_results: matches to save (1-100).
     - group_url: search inside this group instead of global Posts search.
-    - match_mode: 'phrase' (exact phrase), 'all' (every word), 'any' (at least one word).
+    - match_mode: 'phrase' (the words in order; any non-letter characters may join them: 'solar-panel', 'Solar+Panel'), 'all' (every word), 'any' (at least one word).
     - include_comments: also open the first `max_comment_posts` matching posts, switch them to
       "All comments", expand replies and capture comments that contain the keyword (slower).
     - output_dir: root folder for results (default: <project>/fb-scout-output).

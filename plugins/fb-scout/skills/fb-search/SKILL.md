@@ -15,7 +15,7 @@ From the request, extract:
 - `keyword` (required). If it's missing, ask for it and stop.
 - `max_results`: `max=N`, default 20. Keep it at 50 or below unless the user insists. Low volume protects the account.
 - `group_url`: `group=<url>`, if the user wants to search inside one Facebook group.
-- `match_mode`: `phrase` (default), `all` (every word, any order) or `any`.
+- `match_mode`: `phrase` (default; the words in order, also joined by any symbols: `solar-panel`, `Solar+Panel`, `solar_panel`), `all` (every word, any order) or `any`.
 - `include_comments`: true only if the user says `comments` or asks about comments.
 - `blur_names`: true if the user says `blur`, or wants screenshots they can share or show.
 - `output_dir`: only if the user names a folder.

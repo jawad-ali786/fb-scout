@@ -15,7 +15,7 @@ Sentiment and analysis come later (see [PLAN.md](PLAN.md), Phase 3).
 | 2 | **Global keyword search** (Facebook "Posts" search results) |
 | 3 | **Group-scoped search**: search inside one group by its URL (the account must be able to see the group) |
 | 4 | Scroll through results, expand "See more", extract text, links, author, group, time |
-| 5 | **Keyword check**: keep only results whose text really contains the keyword (`phrase` / `all` words / `any` word) |
+| 5 | **Keyword check**: keep only results whose text really contains the keyword (`phrase` / `all` words / `any` word). Between the words, any characters that are not letters or digits count (`solar-panel`, `Solar+Panel`, `solar_panel`, `solar/panel`), but not writing them together (`#solarpanel`). Side effect: a sentence break also counts ("go solar. Panel prices…" matches `solar panel`) |
 | 6 | **Kind classification** from the permalink: `post`, `group_post`, `reel`, `video`, `photo`, `event`, `marketplace`, `comment`, `reply`, `unknown` |
 | 7 | **Element screenshot** of each matching post, keyword highlighted in yellow |
 | 8 | **`results.json`** per run (run metadata + one record per match), written as results come in so a crash keeps partial data |

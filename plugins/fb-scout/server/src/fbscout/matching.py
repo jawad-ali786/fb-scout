@@ -27,8 +27,19 @@ def terms_for(keyword: str, mode: str = "phrase") -> list[str]:
     return list(dict.fromkeys(w for w in kw.split(" ") if w))
 
 
+# Between the words of a keyword: any characters that are not letters or digits
+# ("solar panel", "solar-panel", "Solar+Panel", "solar_panel", "solar/panel").
+# Written together ("#solarpanel") is not a match. capture.py highlights the same way.
+WORD_SEPARATOR = r"[\W_]+"
+
+
 def _pattern(term: str) -> re.Pattern:
-    body = r"\s+".join(re.escape(p) for p in term.split(" ") if p)
+    # Alternating word / non-word chunks. Non-word chunks between two words become
+    # WORD_SEPARATOR; leading/trailing ones stay literal ("#solar", "C++").
+    parts = re.split(r"([\W_]+)", term)
+    body = "".join(
+        re.escape(p) if i % 2 == 0 or not (parts[i - 1] and i + 1 < len(parts) and parts[i + 1]) else WORD_SEPARATOR
+        for i, p in enumerate(parts))
     # Word boundaries that also work for Urdu/Arabic script and hashtags.
     return re.compile(rf"(?<!\w){body}(?!\w)", re.IGNORECASE)
 

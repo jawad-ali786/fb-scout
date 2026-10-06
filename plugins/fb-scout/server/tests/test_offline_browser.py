@@ -278,3 +278,18 @@ def test_partial_results_survive_a_stop(tmp_path):
     on_disk = json.loads((run.dir / "results.json").read_text(encoding="utf-8"))
     assert on_disk["run"]["status"] == "stopped" and on_disk["run"]["error"]["code"] == "checkpoint"
     assert len(on_disk["results"]) == 1
+
+
+def test_highlight_marks_words_joined_by_special_characters():
+    async def body(page):
+        await page.set_content('<div id="p">LONGi 645W Solar+Panel, a solar-panel kit, SOLAR PANEL sale, '
+                               '#solarpanel, solar_panel, solar🌞panel, سولر پینل</div>')
+        el = await page.query_selector("#p")
+        n = await highlight(el, ["solar panel"])
+        marked = await page.evaluate("() => Array.from(CSS.highlights.get('fbscout')).map(r => r.toString())")
+        urdu = await highlight(el, ["سولر-پینل"])
+        return n, marked, urdu
+
+    n, marked, urdu = run_on_page("post.html", body)
+    assert marked == ["Solar+Panel", "solar-panel", "SOLAR PANEL", "solar_panel", "solar🌞panel"] and n == 5
+    assert urdu == 1                                   # Urdu letters are letters, not separators
