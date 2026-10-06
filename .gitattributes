@@ -1,0 +1,2 @@
+# Shell scripts must keep Unix line endings on every OS (the plugin hook runs them with bash).
+*.sh text eol=lf
