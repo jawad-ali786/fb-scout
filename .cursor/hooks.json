@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "git -c alias.fb-scout-check=!sh fb-scout-check scripts/agent-setup-check.sh cursor",
+        "timeout": 15
+      }
+    ]
+  }
+}

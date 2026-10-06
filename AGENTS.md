@@ -11,19 +11,25 @@ Code uses the plugin instead (see `README.md`, "Install").
 
 ## Where each agent finds FB Scout
 
-| Agent | MCP server config | Skills | These instructions |
-|---|---|---|---|
-| Cursor (editor and CLI) | `.cursor/mcp.json` | `.agents/skills/` | `AGENTS.md` |
-| OpenAI Codex (CLI, IDE extension, app) | `.codex/config.toml` | `.agents/skills/` | `AGENTS.md` |
-| GitHub Copilot in VS Code | `.vscode/mcp.json` | `.agents/skills/` | `AGENTS.md` |
-| GitHub Copilot CLI | `.github/mcp.json` | `.agents/skills/` | `AGENTS.md` |
-| Claude Code | the plugin's `plugins/fb-scout/.mcp.json` | `plugins/fb-scout/skills/` | the skills |
+| Agent | MCP server config | Setup check (session start) | Skills | These instructions |
+|---|---|---|---|---|
+| Cursor (editor and CLI) | `.cursor/mcp.json` | `.cursor/hooks.json` | `.agents/skills/` | `AGENTS.md` |
+| OpenAI Codex (CLI, IDE extension, app) | `.codex/config.toml` | `.codex/hooks.json` | `.agents/skills/` | `AGENTS.md` |
+| GitHub Copilot in VS Code | `.vscode/mcp.json` | `.github/hooks/fb-scout.json` | `.agents/skills/` | `AGENTS.md` |
+| GitHub Copilot CLI | `.github/mcp.json` | `.github/hooks/fb-scout.json` | `.agents/skills/` | `AGENTS.md` |
+| Claude Code | the plugin's `plugins/fb-scout/.mcp.json` | the plugin's hook (also installs) | `plugins/fb-scout/skills/` | the skills |
 
 Skills: `fb-search` (one keyword), `fb-batch` (a study: several keywords × groups) and `fb-dataset`
 (counts, browsing, labels, exports). Call them by name (`/fb-search "solar panel" max=15` in Cursor
 and Copilot, `$fb-search` in Codex), or just ask ("search facebook for 'Brand X', 20 posts").
 
 ## Setup (once per computer)
+
+When a session starts, a quick check (`scripts/agent-setup-check.sh`, run by the hook files above) looks
+for uv and the Python packages. If something is missing, it lists the commands below that are still
+needed. **If you, the agent, get that note, show the user those commands before anything else** and
+offer to run them. Codex and Copilot in VS Code also show the note to the user. Codex asks once to
+trust the hook (`/hooks`).
 
 Run these in the repository root:
 
@@ -74,6 +80,11 @@ search Facebook any other way (no browser automation, no web fetching).
   agents. Never edit `.agents/skills/` by hand; a test fails when it is out of date.
 - **Server launch**: the command that starts the server is in five files: `plugins/fb-scout/.mcp.json`,
   `.cursor/mcp.json`, `.codex/config.toml`, `.vscode/mcp.json` and `.github/mcp.json`. Change them together.
+- **Setup check**: `scripts/agent-setup-check.sh`, started through git
+  (`git -c alias.fb-scout-check=!sh fb-scout-check scripts/agent-setup-check.sh <agent>`). The same
+  command works in sh, PowerShell and cmd, also on Windows without sh on PATH, and runs in the
+  repository root. Never put hooks in `.claude/settings.json`: Claude Code reads it too and already has
+  the plugin's hook.
 - **Version**: bump it together in `plugins/fb-scout/.claude-plugin/plugin.json`,
   `.claude-plugin/marketplace.json`, `plugins/fb-scout/server/pyproject.toml` and
   `plugins/fb-scout/server/src/fbscout/__init__.py`.

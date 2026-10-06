@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "git -c alias.fb-scout-check=!sh fb-scout-check scripts/agent-setup-check.sh codex",
+            "timeout": 15,
+            "statusMessage": "Checking the FB Scout setup"
+          }
+        ]
+      }
+    ]
+  }
+}

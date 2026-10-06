@@ -32,6 +32,9 @@ AGENTS.md                           ← instructions for Cursor, Codex, GitHub C
 .codex/config.toml                  ← … in OpenAI Codex
 .vscode/mcp.json                    ← … in GitHub Copilot (VS Code)
 .github/mcp.json                    ← … in GitHub Copilot CLI
+.cursor/hooks.json, .codex/hooks.json, .github/hooks/fb-scout.json
+                                    ← at session start: show the setup commands if FB Scout isn't installed
+scripts/agent-setup-check.sh        ← that check
 scripts/sync_agent_skills.py        ← writes .agents/skills from the Claude Code skills
 plugins/fb-scout/
   .claude-plugin/plugin.json        ← plugin manifest
@@ -228,12 +231,16 @@ Clone this repository and open its folder in the agent. It finds everything ther
 | GitHub Copilot in VS Code (Agent mode) | `.vscode/mcp.json` | `.agents/skills/` | `AGENTS.md` |
 | GitHub Copilot CLI | `.github/mcp.json` | `.agents/skills/` | `AGENTS.md` |
 
-There's no automatic background setup like in Claude Code. Once per computer, run in the repository root:
+There's no automatic background setup like in Claude Code. Instead, when a session starts, a quick check
+looks for uv and the Python packages. If something is missing, the setup commands are shown first:
+Codex and Copilot in VS Code show them as a message, and in Cursor and Copilot CLI the agent passes them
+on. Once per computer, run in the repository root:
 ```
 uv sync --inexact --frozen --no-dev --project plugins/fb-scout/server
 ```
-(plus `uv run --project plugins/fb-scout/server playwright install chromium` if neither Chrome nor Edge
-is installed). Then switch on the project's `fb-scout` server: Cursor and VS Code ask for approval. Codex
+(plus the uv installer if `uv` is missing, and `uv run --project plugins/fb-scout/server playwright
+install chromium` if neither Chrome nor Edge is installed). Codex asks once to trust the check (`/hooks`).
+Then switch on the project's `fb-scout` server: Cursor and VS Code ask for approval. Codex
 and Copilot CLI read the project config only in a **trusted** folder, and must be **started in the
 repository root**, because their configs can't name the folder and use a relative path. Details are in
 [AGENTS.md](AGENTS.md).

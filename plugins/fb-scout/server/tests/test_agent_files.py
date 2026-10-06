@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -54,3 +56,54 @@ def test_every_agent_starts_the_same_server(config):
     output_dir = server.get("env", {}).get("FBSCOUT_OUTPUT_DIR")
     if output_dir:
         assert _resolve(output_dir) == (ROOT / "fb-scout-output").resolve()
+
+
+# The setup check that Cursor, Codex and Copilot run when a session starts. No quotes, so the same
+# command works in sh, PowerShell and cmd.
+SETUP_CHECK = "git -c alias.fb-scout-check=!sh fb-scout-check scripts/agent-setup-check.sh"
+SYNC = "uv sync --inexact --frozen --no-dev --project plugins/fb-scout/server"
+
+
+def _hook_commands(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("command", "bash", "powershell") and isinstance(value, str):
+                yield value
+            else:
+                yield from _hook_commands(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _hook_commands(value)
+
+
+@pytest.mark.parametrize("config, agent", [
+    (".cursor/hooks.json", "cursor"), (".codex/hooks.json", "codex"), (".github/hooks/fb-scout.json", "copilot"),
+])
+def test_every_agent_runs_the_setup_check(config, agent):
+    commands = list(_hook_commands(json.loads((ROOT / config).read_text(encoding="utf-8"))))
+    assert commands and all(c == f"{SETUP_CHECK} {agent}" for c in commands)
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+@pytest.mark.parametrize("agent", ["cursor", "codex", "copilot"])
+def test_setup_check_tells_the_agent_what_to_run(tmp_path, agent):
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(ROOT / "scripts" / "agent-setup-check.sh", tmp_path / "scripts")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)   # a repository without FB Scout installed
+    out = subprocess.run(SETUP_CHECK.split() + [agent], cwd=tmp_path, capture_output=True, text=True, check=True)
+    data = json.loads(out.stdout)
+    context = (data.get("additional_context")                        # Cursor
+               or data.get("additionalContext")                      # Copilot CLI
+               or data["hookSpecificOutput"]["additionalContext"])   # Codex
+    assert SYNC in context and "show the user" in context
+    if agent != "cursor":   # Cursor shows nothing to the user at session start
+        assert SYNC in data["systemMessage"]
+
+
+@pytest.mark.skipif(not shutil.which("git") or not shutil.which("uv"), reason="needs git and uv")
+def test_setup_check_is_silent_once_installed():
+    venv = PLUGIN / "server" / ".venv"
+    if not ((venv / "Scripts" / "fbscout-mcp.exe").exists() or (venv / "bin" / "fbscout-mcp").exists()):
+        pytest.skip("the packages aren't installed here")
+    out = subprocess.run(SETUP_CHECK.split() + ["copilot"], cwd=ROOT, capture_output=True, text=True, check=True)
+    assert out.stdout == ""

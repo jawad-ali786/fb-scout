@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "git -c alias.fb-scout-check=!sh fb-scout-check scripts/agent-setup-check.sh copilot",
+        "powershell": "git -c alias.fb-scout-check=!sh fb-scout-check scripts/agent-setup-check.sh copilot",
+        "cwd": ".",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}
