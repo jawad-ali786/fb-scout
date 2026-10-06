@@ -27,10 +27,10 @@ def terms_for(keyword: str, mode: str = "phrase") -> list[str]:
     return list(dict.fromkeys(w for w in kw.split(" ") if w))
 
 
-# Between the words of a keyword: any characters that are not letters or digits
-# ("solar panel", "solar-panel", "Solar+Panel", "solar_panel", "solar/panel").
-# Written together ("#solarpanel") is not a match. capture.py highlights the same way.
-WORD_SEPARATOR = r"[\W_]+"
+# Between the words of a keyword: any characters that are not letters or digits,
+# or none at all ("solar panel", "solar-panel", "Solar+Panel", "solar_panel",
+# "solarpanel", "#solarpanel"). capture.py highlights the same way.
+WORD_SEPARATOR = r"[\W_]*"
 
 
 def _pattern(term: str) -> re.Pattern:

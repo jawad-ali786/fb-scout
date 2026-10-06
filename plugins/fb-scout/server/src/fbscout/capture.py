@@ -33,12 +33,12 @@ MARK_BLUR_JS = """(el, indices) => {
 
 CLEAR_BLUR_JS = "(el) => el.querySelectorAll('[data-fbscout-blur]').forEach(n => n.removeAttribute('data-fbscout-blur'))"
 
-# Same rule as matching._pattern: any non-letter/digit characters between the words
-# ("solar-panel", "Solar+Panel", "solar_panel"); leading/trailing symbols stay literal.
+# Same rule as matching._pattern: any non-letter/digit characters, or none, between the
+# words ("solar-panel", "Solar+Panel", "solarpanel"); leading/trailing symbols stay literal.
 HIGHLIGHT_JS = r"""(el, terms) => {
   if (!window.CSS || !CSS.highlights || typeof Highlight === 'undefined') return -1;
   const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const sep = '[^\\p{L}\\p{N}]+';
+  const sep = '[^\\p{L}\\p{N}]*';
   const toRegex = (t) => {
     const parts = t.split(/([^\p{L}\p{N}]+)/u);
     return new RegExp(parts.map((p, i) => i % 2 === 0 || !(parts[i - 1] && i + 1 < parts.length && parts[i + 1])

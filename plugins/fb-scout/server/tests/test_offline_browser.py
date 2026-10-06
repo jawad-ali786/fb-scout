@@ -61,11 +61,11 @@ def test_collect_posts(tmp_path):
 
     assert run.stats["candidates_seen"] == 10     # 11 posts, one duplicate
     assert run.stats["skipped_not_posts"] == 1    # the member card
-    assert run.stats["verified"] == 6             # not: keyword only in the group name / a comment preview
-    assert run.stats["saved"] == 6
-    assert run.stats["screenshots"] == 6
+    assert run.stats["verified"] == 7             # not: keyword only in the group name / a comment preview
+    assert run.stats["saved"] == 7
+    assert run.stats["screenshots"] == 7
 
-    group_post, page_post, video_post, group_photo_post, poster_post, sale_post = records
+    group_post, page_post, hashtag_reel, video_post, group_photo_post, poster_post, sale_post = records
     assert group_post["kind"] == "group_post"
     assert group_post["post_url"] == "https://www.facebook.com/groups/123456/posts/789012/"   # revealed by hover, tracking removed
     assert group_post["author_name"] == "Ali Khan"
@@ -82,6 +82,9 @@ def test_collect_posts(tmp_path):
     assert group_post["posted_at"].startswith("2026-09-28T16:12:00")    # from the tooltip
     assert group_post["posted_at_precision"] == "minute"
     assert group_post["language"] == "en"
+
+    assert hashtag_reel["kind"] == "reel" and hashtag_reel["matched_in"] == "text"   # "#solarpanel"
+    assert hashtag_reel["post_url"] == "https://www.facebook.com/reel/987654321/"
 
     assert page_post["kind"] == "post"
     assert page_post["post_url"] == "https://www.facebook.com/SolarCo/posts/pfbid02abc/"
@@ -132,7 +135,7 @@ def test_save_unverified_keeps_fuzzy_results(tmp_path):
 
     records = run_on_page("search.html", body)
     assert len(records) == 10                                       # never the member card
-    assert [r["keyword_verified"] for r in records] == [True, True, False, False, True, True, True, False, False, True]
+    assert [r["keyword_verified"] for r in records] == [True, True, False, True, True, True, True, False, False, True]
     assert "All type solar panel" not in (records[7]["match_snippet"] or "")
     assert records[3]["kind"] == "reel"
 
@@ -291,5 +294,5 @@ def test_highlight_marks_words_joined_by_special_characters():
         return n, marked, urdu
 
     n, marked, urdu = run_on_page("post.html", body)
-    assert marked == ["Solar+Panel", "solar-panel", "SOLAR PANEL", "solar_panel", "solar🌞panel"] and n == 5
+    assert marked == ["Solar+Panel", "solar-panel", "SOLAR PANEL", "solarpanel", "solar_panel", "solar🌞panel"] and n == 6
     assert urdu == 1                                   # Urdu letters are letters, not separators

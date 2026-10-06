@@ -13,13 +13,14 @@ def test_phrase_case_and_whitespace():
 @pytest.mark.parametrize("text", [
     "solar-panel cleaning", "LONGi 645W Solar+Panel New Arrival", "+LONGi+Hi-MO+10+645W+Solar+Panel+",
     "solar - panel", "solar_panel", "solar.panel", "solar/panel", "#solar_panel", "solar🌞panel", "solar...panel",
+    "solarpanel", "#solarpanel cleaning tips", "SolarPanel", "big solarpanel",
 ])
-def test_phrase_words_joined_by_any_special_characters(text):
+def test_phrase_words_joined_by_special_characters_or_nothing(text):
     assert match_keyword("solar panel", text).ok
 
 
-@pytest.mark.parametrize("text", ["solarpanel", "#solarpanel", "solar panels", "solar paneling", "big solarpanel"])
-def test_phrase_words_written_together_or_longer_are_not_a_match(text):
+@pytest.mark.parametrize("text", ["solar panels", "solar paneling", "mysolarpanel", "#mysolarpanel", "solarpanels"])
+def test_phrase_must_still_be_whole_words(text):
     assert not match_keyword("solar panel", text).ok
 
 
@@ -38,8 +39,8 @@ def test_symbols_at_the_ends_of_a_keyword_stay_literal():
 
 def test_phrase_respects_word_boundaries():
     assert not match_keyword("car", "I lost my scarf").ok
-    assert not match_keyword("solar panel", "#solarpanel cleaning tips").ok
     assert match_keyword("solarpanel", "#solarpanel cleaning tips").ok
+    assert not match_keyword("solarpanel", "solar panel").ok      # no way to know where to split
 
 
 def test_all_and_any_modes():
